@@ -27,7 +27,8 @@ flowchart LR
 - REST calls carry the Agora bearer and `X-Agora-Client`; attachment bytes use that same authenticated path before presentation.
 - Browser live updates use the Hub's existing `/ws?token=KEY` route. Without a key or a working socket, `TeamPage` stays functional through polling.
 - Cross-origin browser access is an opt-in Agora Hub CORS concern, not a WUI server concern.
-- The Hub remains the source of truth. UI state such as expanded messages, active filters, and drafts does not replace Hub collaboration state.
+- The Hub remains the source of truth. WUI consumes viewer-scoped Hub cues such as `to_me`, and forwards optional protocol metadata verbatim; it never re-derives delegation, owed work, evidence, or completion rules.
+- UI state such as expanded messages, active filters, and drafts does not replace Hub collaboration state.
 
 ## Reuse in Continuum
 

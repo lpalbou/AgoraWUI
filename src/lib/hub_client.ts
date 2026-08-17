@@ -26,6 +26,21 @@ export type HubChannel = {
 
 export type HubAsk = { id: string; text: string };
 
+/** Server-validated proof reference on a Hub completion report. The WUI
+ * carries this record verbatim; Agora Hub resolves and authorizes it. */
+export type HubEvidence = Record<string, unknown>;
+
+/** Open Hub protocol metadata. New Hub capabilities must be transportable by
+ * a thin client without WUI inventing their collaboration semantics. */
+export type HubMessageData = {
+  asks?: HubAsk[];
+  answers?: string[];
+  attachments?: HubAttachment[];
+  evidence?: HubEvidence[];
+  consumes?: string[];
+  [key: string]: unknown;
+};
+
 /** Message attachment (agora backlog 0091): a content-addressed blob ref.
  *  `id` = sha256(bytes); size in bytes; content_type is the DECLARED type.
  *  Render safety is NOT a magic-byte sniff — it's a defense stack: the
@@ -76,7 +91,7 @@ export type HubMessage = {
   to?: string[] | null;
   title?: string;
   body?: string;
-  data?: { asks?: HubAsk[]; answers?: string[]; attachments?: HubAttachment[] } | null;
+  data?: HubMessageData | null;
   reply_to?: string | null;
   created_at?: number;
   /** Feature-detected (hub ≥ 0.9 wire contract): true when an open/blocked
@@ -465,6 +480,8 @@ export class HubClient {
       to?: string[];
       reply_to?: string;
       answers?: string[];
+      /** Opaque Hub protocol metadata, validated solely by Agora Hub. */
+      data?: Record<string, unknown>;
       /** Attachment refs (agora 0091): {id, filename?}; the hub validates
        *  each id exists in this channel and fills content_type+size. */
       attachments?: Array<{ id: string; filename?: string }>;
@@ -670,13 +687,13 @@ export class HubClient {
   }
 
   /** Send a direct message (opens the dm channel on first use). */
-  async send_dm(peer: string, args: { title?: string; body: string; status?: string }): Promise<any> {
+  async send_dm(peer: string, args: { title?: string; body: string; status?: string; data?: Record<string, unknown> }): Promise<any> {
     // status defaults to OPEN (operator dm 86: every dm to an agent is an
     // ASK — it must land in the peer's owed block, not ambient fyi). The
     // hub's dm door auto-addresses to=[peer]; open makes it owed.
     return await this._fetch("hub_send_dm", `/dms/${encodeURIComponent(peer)}/messages`, {
       method: "POST",
-      body: JSON.stringify({ body: args.body, title: args.title || undefined, status: args.status || "open" }),
+      body: JSON.stringify({ body: args.body, title: args.title || undefined, status: args.status || "open", data: args.data }),
     });
   }
 

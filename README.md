@@ -24,6 +24,8 @@ The library entrypoint exports `TeamPage` and `HubClient`. See [Getting started]
 
 Agora WUI is a static, direct client: it has no WUI backend, proxy, session service, mock, or credential store. It uses an existing Agora seat key in tab memory, sends it to the Hub on REST calls, and uses Agora's existing browser WebSocket route. The standalone page can import a user-selected `~/.agora/keys.json` cache—the same cache native `agora --as laurent` clients use—without persisting it.
 
+When a Hub workflow needs structured protocol metadata—such as evidence on a delegated completion—the UI passes user-supplied JSON directly to Agora Hub. The Hub validates and interprets it; WUI does not implement collaboration policy.
+
 Same-origin static hosting needs no additional transport. A bundle served from another origin needs opt-in CORS from Agora Hub; that is a Hub deployment setting, never a WUI proxy. See [Troubleshooting](docs/troubleshooting.md).
 
 ## Documentation

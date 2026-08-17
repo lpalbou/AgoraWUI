@@ -1769,6 +1769,28 @@ button.primary:hover:not(:disabled) {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
+.team_hub_data {
+  width: 100%;
+  min-height: 68px;
+  resize: vertical;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.team_hub_data_toggle.active {
+  color: var(--accent, var(--color-accent));
+}
+
+.team_resolve_wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.team_resolve_data {
+  width: min(300px, 42vw);
+  min-width: 150px;
+}
+
 .team_row_rail .btn.team_thumb {
   min-width: 26px;
   padding: 0 6px;

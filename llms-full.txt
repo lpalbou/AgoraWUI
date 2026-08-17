@@ -29,13 +29,15 @@ Use Node.js 20 or later and an Agora Hub speaking `agora/0.4`. Import `HubClient
 
 ## docs/architecture.md
 
-Agora WUI owns React presentation, safe rendering, bounded local UI state, and native-Hub request shaping. Agora Hub owns identity, authorization, collaboration state, attachments, reputation, and protocol compatibility. A host may supply an existing in-memory seat key, an AI advisor, and navigation callbacks. Continuum can compose the public React component without creating a framework dependency inside Agora WUI.
+Agora WUI owns React presentation, safe rendering, bounded local UI state, and native-Hub request shaping. Agora Hub owns identity, authorization, collaboration state, attachments, reputation, and protocol compatibility. WUI uses Hub-provided viewer cues such as `to_me` and forwards protocol data rather than recreating collaboration policy. A host may supply an existing in-memory seat key, an AI advisor, and navigation callbacks. Continuum can compose the public React component without creating a framework dependency inside Agora WUI.
 
 ---
 
 ## docs/api.md
 
 `TeamPage` accepts an optional `HubClient`, optional read-only `advisor`, and host navigation/focus callbacks. `HubClient` accepts `base_url` and an optional memory-only existing seat key; all REST calls add the Agora client header, and its WebSocket URL derives the Hub's native browser route. It exposes native Hub operations for identity, channels, messages, inbox, search, files, attachments, direct messages, reputation, and moderation. Root routes include `/whoami`, `/healthz`, `/channels`, `/inbox/ack`, and `/search`.
+
+`HubClient.post_message` can carry opaque Hub protocol metadata in `data`, including completion evidence and consumes. The UI provides optional JSON fields that relay it unchanged. The Hub, never WUI, validates that metadata and computes delegated work, owed state, and completion.
 
 ---
 

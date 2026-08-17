@@ -107,6 +107,9 @@ export type FilterContext = {
    *  from /inbox envelopes, merged by seq (backlog 0010). Feeds the
    *  vigilance filter alongside the message-visible axes. */
   escalated_seqs?: Set<number>;
+  /** Viewer-scoped Hub `to_me` cues from /inbox. These include routed
+   * delegate duties that are intentionally absent from the stored `to` list. */
+  to_me_seqs?: Set<number>;
 };
 
 function msg_matches(m: HubMessage, filter: TeamFilter, ctx: FilterContext): boolean {
@@ -137,11 +140,11 @@ function msg_matches(m: HubMessage, filter: TeamFilter, ctx: FilterContext): boo
       // thread when any message matches, so both shapes surface.
       return status === "resolved";
     case "to_me":
-      return Array.isArray(m.to) && m.to.includes(ctx.seat);
+      return (Array.isArray(m.to) && m.to.includes(ctx.seat)) || Boolean(ctx.to_me_seqs?.has(m.seq));
     case "vigilance": {
       const unanswered = (status === "open" || status === "blocked") && m.has_resolved_reply !== true;
       const critical = m.critical === true;
-      const to_me = Array.isArray(m.to) && m.to.includes(ctx.seat);
+      const to_me = (Array.isArray(m.to) && m.to.includes(ctx.seat)) || Boolean(ctx.to_me_seqs?.has(m.seq));
       // Hub escalation axes (backlog 0010): escalated/effective_urgency
       // live on inbox envelopes, merged in by seq.
       const escalated = Boolean(ctx.escalated_seqs?.has(m.seq));
@@ -213,6 +216,24 @@ export function unread_seqs_by_channel(inbox: Array<{ channel?: string; seq?: nu
   return out;
 }
 
+/** Viewer-scoped addressed rows. Newer Hub envelopes compute `to_me`, which
+ * includes delegated operator work; older envelopes retain the raw `to`
+ * fallback. The WUI consumes this served verdict and never derives routing. */
+export function to_me_seqs_by_channel(
+  inbox: Array<{ channel?: string; seq?: number; to_me?: boolean; to?: string[] | null }>,
+  seat: string
+): Record<string, Set<number>> {
+  const out: Record<string, Set<number>> = {};
+  for (const e of inbox) {
+    const c = String(e.channel || "");
+    const seq = Number(e.seq);
+    if (!c || !Number.isFinite(seq)) continue;
+    const legacy_to_me = e.to_me === undefined && Array.isArray(e.to) && seat ? e.to.includes(seat) : false;
+    if (e.to_me === true || legacy_to_me) (out[c] ||= new Set()).add(seq);
+  }
+  return out;
+}
+
 /** STICKY-DEBT seqs (operator dm 111: "i can't unread this message").
  *  The hub pins three classes in the inbox PAST cursor acks: open/blocked
  *  obligations, addressed reply/fyi directives (0102 — they clear only on
@@ -222,7 +243,7 @@ export function unread_seqs_by_channel(inbox: Array<{ channel?: string; seq?: nu
  *  them. This classifier lets the row say the truth: "needs your reply".
  */
 export function debt_seqs_by_channel(
-  inbox: Array<{ channel?: string; seq?: number; status?: string; to?: string[] | null }>,
+  inbox: Array<{ channel?: string; seq?: number; status?: string; to_me?: boolean; addressed?: boolean; to?: string[] | null }>,
   seat: string
 ): Record<string, Set<number>> {
   const out: Record<string, Set<number>> = {};
@@ -231,10 +252,15 @@ export function debt_seqs_by_channel(
     const seq = Number(e.seq);
     if (!c || !Number.isFinite(seq)) continue;
     const status = String(e.status || "").toLowerCase();
-    const to_me = Array.isArray(e.to) && seat ? e.to.includes(seat) : false;
-    // open/blocked pin every member in reach (broadcast obligations);
-    // reply/fyi pin only when addressed to the viewer (0102).
-    const is_debt = status === "open" || status === "blocked" || ((status === "reply" || status === "fyi") && to_me);
+    // `to_me` is the Hub's viewer-specific routing verdict. It covers
+    // delegate obligations that cannot be reconstructed from message `to`.
+    // Older Hubs omit it, so retain the raw-address fallback there only.
+    const to_me = e.to_me === true || (e.to_me === undefined && Array.isArray(e.to) && seat ? e.to.includes(seat) : false);
+    const broadcast = e.addressed === false || (e.addressed === undefined && (!Array.isArray(e.to) || e.to.length === 0));
+    // Open/blocked broadcasts remain room-wide. An addressed row is a debt
+    // only for the recipient the Hub selected; reply/fyi directives are
+    // always recipient-scoped.
+    const is_debt = ((status === "open" || status === "blocked") && (to_me || broadcast)) || ((status === "reply" || status === "fyi") && to_me);
     if (is_debt) (out[c] ||= new Set()).add(seq);
   }
   return out;

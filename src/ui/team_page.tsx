@@ -56,6 +56,7 @@ import {
   serialize_transcript,
   debt_seqs_by_channel,
   escalated_seqs_by_channel,
+  to_me_seqs_by_channel,
   unread_by_channel,
   unread_seqs_by_channel,
 } from "../lib/team_model";
@@ -357,6 +358,8 @@ export function TeamPage(props: {
   /** Sticky hub debts per channel (open/blocked + addressed directives):
    *  pinned past cursor acks; clear only when answered (dm 111). */
   const [debt_map, set_debt_map] = useState<Record<string, Set<number>>>({});
+  /** Hub-computed, viewer-scoped address cues. */
+  const [to_me_map, set_to_me_map] = useState<Record<string, Set<number>>>({});
   /** Hub-escalated seqs per channel (backlog 0010): escalated /
    *  effective_urgency=interrupt from inbox envelopes → vigilance filter. */
   const [escalation_map, set_escalation_map] = useState<Record<string, Set<number>>>({});
@@ -459,6 +462,10 @@ export function TeamPage(props: {
 
   const [compose_text, set_compose_text] = useState("");
   const [compose_title, set_compose_title] = useState("");
+  /** Optional protocol metadata is supplied verbatim to Agora Hub. It is
+   * deliberately ephemeral: WUI relays it but never interprets or stores it. */
+  const [compose_hub_data, set_compose_hub_data] = useState("");
+  const [show_compose_hub_data, set_show_compose_hub_data] = useState(false);
   /** Pending attachments (agora 0091): uploaded blobs to ref on the next
    *  post. Cleared on send + channel switch. */
   const [pending_attachments, set_pending_attachments] = useState<HubAttachment[]>([]);
@@ -721,6 +728,8 @@ export function TeamPage(props: {
       // clicking cannot clear them, only answering can.
       const next_debts = debt_seqs_by_channel(inbox as any, meta_ref.current?.seat || "");
       set_debt_map((cur) => (same_unread(cur, next_debts) ? cur : next_debts));
+      const next_to_me = to_me_seqs_by_channel(inbox as any, meta_ref.current?.seat || "");
+      set_to_me_map((cur) => (same_unread(cur, next_to_me) ? cur : next_to_me));
       const next_escalated = escalated_seqs_by_channel(inbox as any);
       set_escalation_map((cur) => (same_unread(cur, next_escalated) ? cur : next_escalated));
       // Desk badge rides the badge cadence, self-throttled to ≥30s.
@@ -2255,6 +2264,7 @@ export function TeamPage(props: {
    *  authoritative in the digest (ADR-0003). Two-step so a stray click
    *  never closes a live discussion. */
   const [resolve_nudge, set_resolve_nudge] = useState("");
+  const [resolve_hub_data, set_resolve_hub_data] = useState("");
 
   /** Retract one of the seat's own messages (operator dm 88; agora 0097).
    *  The hub does the real work (tombstone at every read, obligation
@@ -2282,6 +2292,18 @@ export function TeamPage(props: {
 
   async function resolve_thread(m: HubMessage): Promise<void> {
     if (posting) return;
+    let data: Record<string, unknown> | undefined;
+    const raw_data = resolve_hub_data.trim();
+    if (raw_data) {
+      try {
+        const parsed = JSON.parse(raw_data);
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error();
+        data = parsed as Record<string, unknown>;
+      } catch {
+        set_error("Completion metadata must be a JSON object. Agora Hub validates its contents.");
+        return;
+      }
+    }
     set_posting(true);
     set_error("");
     try {
@@ -2291,8 +2313,10 @@ export function TeamPage(props: {
         status: "resolved",
         to: resolve_to ? [resolve_to] : undefined,
         reply_to: m.id,
+        data,
       });
       set_resolve_nudge("");
+      set_resolve_hub_data("");
       set_notice(`Marked #${m.seq} resolved.`);
       setTimeout(() => set_notice(""), 3000);
       await refresh_messages(selected, { background: true });
@@ -2660,6 +2684,10 @@ export function TeamPage(props: {
     // back to the title) — the empty-guard must not swallow it.
     if ((!body && !has_attachments && !in_group_kind) || posting || !selected) return;
     if (in_group_kind) {
+      if (compose_hub_data.trim()) {
+        set_error("Hub data belongs on a message. Create the room first, then post the metadata in that room.");
+        return;
+      }
       const members = parse_member_list(group_members_text);
       if (!members.length) {
         set_error("Group needs at least one member — write their names like: @entity @assistant");
@@ -2697,6 +2725,18 @@ export function TeamPage(props: {
     const answers = Object.entries(reply_answers)
       .filter(([, v]) => v)
       .map(([k]) => k);
+    let data: Record<string, unknown> | undefined;
+    const raw_data = compose_hub_data.trim();
+    if (raw_data) {
+      try {
+        const parsed = JSON.parse(raw_data);
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error();
+        data = parsed as Record<string, unknown>;
+      } catch {
+        set_error("Hub data must be a JSON object. Agora Hub validates its contents.");
+        return;
+      }
+    }
     // Inside a dm channel every post is a plain message to the peer —
     // the kind machinery applies only to regular channels.
     const in_dm = selected.startsWith("dm:");
@@ -2729,7 +2769,11 @@ export function TeamPage(props: {
         const peer = dm_peer.trim();
         const dm_atts = [...pending_attachments];
         const dm_source = selected;
-        await hub.send_dm(peer, { body: body || (dm_atts.length ? `(${dm_atts.length} attachment${dm_atts.length === 1 ? "" : "s"})` : body), title: compose_title.trim() || undefined });
+        await hub.send_dm(peer, {
+          body: body || (dm_atts.length ? `(${dm_atts.length} attachment${dm_atts.length === 1 ? "" : "s"})` : body),
+          title: compose_title.trim() || undefined,
+          data,
+        });
         const dm_name = `dm:${[seat, peer].sort().join("--")}`;
         if (dm_atts.length) {
           const { migrated, att_failed } = await migrate_attachments(dm_source, dm_name, dm_atts);
@@ -2770,6 +2814,7 @@ export function TeamPage(props: {
           to: dm_to ? [dm_to] : undefined,
           reply_to: reply_to?.id,
           answers: reply_to && answers.length ? answers : undefined,
+          data,
           attachments: att.length ? att : undefined,
         };
         try {
@@ -2794,6 +2839,8 @@ export function TeamPage(props: {
       }
       set_compose_text("");
       set_compose_title("");
+      set_compose_hub_data("");
+      set_show_compose_hub_data(false);
       set_pending_attachments([]);
       set_reply_to(null);
       set_reply_answers({});
@@ -2857,8 +2904,9 @@ export function TeamPage(props: {
       unread_snapshot_seqs: filter === "unread" ? unread_snapshot || undefined : undefined,
       // Hub escalation axes for the vigilance filter (backlog 0010).
       escalated_seqs: escalation_map[selected],
+      to_me_seqs: to_me_map[selected],
     }),
-    [seat, unread_map, selected, filter, unread_snapshot, escalation_map]
+    [seat, unread_map, selected, filter, unread_snapshot, escalation_map, to_me_map]
   );
   /** Live group preview (agora dm 23 + operator dm 71): derived room slug
    *  + roster, from EITHER front door — the /group slash command in the
@@ -4044,17 +4092,33 @@ export function TeamPage(props: {
                 roots that actually opened something (open/blocked) — a
                 resolved post closes the thread on the hub. Two-step. */}
             {opts.is_root && (String(m.status || "").toLowerCase() === "open" || String(m.status || "").toLowerCase() === "blocked") ? (
-              <button
-                className={`btn btn_icon ${resolve_nudge === m.id ? "team_danger" : ""}`}
-                title={resolve_nudge === m.id ? "Click again to close this topic (posts a resolved reply)" : "Mark this topic resolved — closes the thread on the hub (two clicks)"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (resolve_nudge === m.id) void resolve_thread(m);
-                  else set_resolve_nudge(m.id);
-                }}
-              >
-                {resolve_nudge === m.id ? "✓ confirm resolve" : "✓ Resolve"}
-              </button>
+              <span className="team_resolve_wrap">
+                {resolve_nudge === m.id ? (
+                  <input
+                    className="team_resolve_data"
+                    aria-label="Completion metadata JSON"
+                    value={resolve_hub_data}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => set_resolve_hub_data(e.target.value)}
+                    placeholder={'Optional Hub JSON, e.g. {"evidence":[…]}' }
+                    title="For delegated completion, pass Hub evidence here. WUI does not interpret it."
+                  />
+                ) : null}
+                <button
+                  className={`btn btn_icon ${resolve_nudge === m.id ? "team_danger" : ""}`}
+                  title={resolve_nudge === m.id ? "Click again to close this topic (posts a resolved reply)" : "Mark this topic resolved — closes the thread on the hub (two clicks)"}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (resolve_nudge === m.id) void resolve_thread(m);
+                    else {
+                      set_resolve_hub_data("");
+                      set_resolve_nudge(m.id);
+                    }
+                  }}
+                >
+                  {resolve_nudge === m.id ? "✓ confirm resolve" : "✓ Resolve"}
+                </button>
+              </span>
             ) : null}
           </div>
         ) : null}
@@ -4949,6 +5013,17 @@ export function TeamPage(props: {
                 untitled.
               </div>
             ) : null}
+            {show_compose_hub_data ? (
+              <textarea
+                className="team_hub_data"
+                aria-label="Hub protocol data JSON"
+                rows={3}
+                value={compose_hub_data}
+                onChange={(e) => set_compose_hub_data(e.target.value)}
+                placeholder={'Optional Hub JSON, e.g. {"evidence":[{"kind":"store","ref":"plan:..."}]}. WUI relays it; Hub validates it.'}
+                disabled={!can_post}
+              />
+            ) : null}
             {/* /group preview (agora dm 23): what will be created, BEFORE
                 the click — room slug + exact roster; a mentionless line
                 shows the usage instead of failing after send. */}
@@ -5033,6 +5108,15 @@ export function TeamPage(props: {
                 is pointless (it IS a dm) and the composer posts straight
                 to the conversation. */}
             <div className="team_compose_row">
+              <button
+                type="button"
+                className={`team_compose_control team_hub_data_toggle ${show_compose_hub_data ? "active" : ""}`}
+                onClick={() => set_show_compose_hub_data((open) => !open)}
+                disabled={!can_post}
+                title="Optional structured data passed directly to Agora Hub"
+              >
+                Hub data
+              </button>
               {!reply_to && !is_dm_channel ? (
                 <select
                   className="team_compose_control team_kind_select"

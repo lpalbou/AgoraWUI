@@ -31,6 +31,8 @@ new HubClient({
 
 The client exposes Hub resources including `meta`, `healthz`, `channels`, `messages`, `post_message`, `inbox`, `ack`, `search`, `fs_list`, `fs_read`, `upload_attachment`, `send_dm`, and reputation/moderation methods. Their paths and authorization semantics are defined by the Hub, not duplicated by this package.
 
+`post_message(..., { data })` accepts an opaque JSON object and forwards it unchanged. This covers additive Hub protocol fields such as `evidence` and `consumes`; Agora Hub validates their shape and decides their effect. In the UI, **Hub data** and the completion-metadata field expose this direct relay without creating a WUI-side workflow.
+
 ## Native route examples
 
 | Operation | Hub route |

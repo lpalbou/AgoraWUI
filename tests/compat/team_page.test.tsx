@@ -588,11 +588,15 @@ describe("TeamPage moderation (operator dm 12: remove from a channel OR the hub)
     // First Resolve click ARMS; the confirm posts.
     fireEvent.click(screen.getByRole("button", { name: "✓ Resolve" }));
     expect(resolve_calls().length).toBe(0);
+    fireEvent.change(screen.getByRole("textbox", { name: "Completion metadata JSON" }), {
+      target: { value: '{"evidence":[{"kind":"store","ref":"plan:wui-audit"}]}' },
+    });
     fireEvent.click(await screen.findByRole("button", { name: "✓ confirm resolve" }));
     await waitFor(() => expect(resolve_calls().length).toBe(1));
     const body = JSON.parse(String(resolve_calls()[0]?.[1]?.body || "{}"));
     expect(body.status).toBe("resolved");
     expect(body.reply_to).toBe("m1");
+    expect(body.data).toEqual({ evidence: [{ kind: "store", ref: "plan:wui-audit" }] });
   });
 
   it("a DM row's trash is a two-step confirm that calls POST /leave (operator dm 14)", async () => {
@@ -860,6 +864,26 @@ describe("TeamPage moderation (operator dm 12: remove from a channel OR the hub)
 
 describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
   const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, data: null };
+
+  it("uses the Hub's viewer-scoped to_me verdict for debt and @me routing", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "other-debt", seq: 1, sender: "core", status: "open", title: "for someone else", body: "x", to: ["other"], reply_to: null },
+        { ...base, id: "delegate-debt", seq: 2, sender: "laurent", status: "open", title: "delegated to this seat", body: "y", to: [], reply_to: null },
+      ],
+      inbox: [
+        { channel: "commons", seq: 1, status: "open", addressed: true, to_me: false },
+        { channel: "commons", seq: 2, status: "open", addressed: false, to_me: true },
+      ],
+    });
+    render_page();
+    await screen.findByText("delegated to this seat");
+    await screen.findByText("needs reply");
+    expect(screen.getAllByText("needs reply")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /^@me/ }));
+    await screen.findByText("delegated to this seat");
+    expect(screen.queryByText("for someone else")).toBeNull();
+  });
 
   it("groups replies under their root and counts threads, not messages", async () => {
     stub_hub({

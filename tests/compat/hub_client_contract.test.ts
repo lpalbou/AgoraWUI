@@ -40,6 +40,21 @@ describe("native Agora Hub transport", () => {
     expect(new HubClient({ base_url: "https://hub.example.test" }).ws_url()).toBeNull();
   });
 
+  it("forwards opaque Hub protocol data unchanged", async () => {
+    let posted: any;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      posted = JSON.parse(String(init?.body || "{}"));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }));
+    const hub = new HubClient({ bearer_token: "existing-key" });
+    await hub.post_message("commons", {
+      body: "completion",
+      status: "resolved",
+      data: { evidence: [{ kind: "store", ref: "plan:wui-audit" }], consumes: ["commons#1"] },
+    });
+    expect(posted.data).toEqual({ evidence: [{ kind: "store", ref: "plan:wui-audit" }], consumes: ["commons#1"] });
+  });
+
   it("uses the native attachment path", () => {
     const client = new HubClient({ base_url: "http://127.0.0.1:8765" });
     expect(client.attachment_url("team alpha", "blob_123")).toBe("http://127.0.0.1:8765/channels/team%20alpha/attachments/blob_123");
