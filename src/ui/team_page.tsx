@@ -779,7 +779,10 @@ export function TeamPage(props: {
    *  the cheap freshness primitive the window math and poll lane ride. */
   async function refresh_channel_list(): Promise<HubChannel[]> {
     const chans = await hub.channels();
-    const all = [...chans];
+    // /channels includes public rooms the current seat has not joined.
+    // The Team surface can only read a member channel, so keep the rail and
+    // every automatic selection membership-scoped.
+    const all = chans.filter((channel) => channel.member);
     all.sort((a, b) => (b.last_at || 0) - (a.last_at || 0));
     // Identity-preserving install (adversary F8): the rail refresh fires
     // every 6th poll — an unchanged list must not re-render the page.
@@ -810,11 +813,17 @@ export function TeamPage(props: {
       // seat, his own console — the earlier dm-exclusion protected agent
       // surfaces; his call supersedes it here). The rail renders them as
       // their own section.
-      const all = [...chans];
+      // Public discovery is Hub-owned; this thin client must not select an
+      // unreadable discovery row and then manufacture a red fetch failure.
+      const all = chans.filter((channel) => channel.member);
       all.sort((a, b) => (b.last_at || 0) - (a.last_at || 0));
       set_channels(all);
       const open = all.filter((c) => !c.name.startsWith("dm:"));
-      if (!selected && open.length) set_selected(open[0].name);
+      const fallback = open[0] || all[0];
+      set_selected((current) => {
+        if (current && all.some((channel) => channel.name === current)) return current;
+        return fallback?.name || "";
+      });
       set_error("");
       void refresh_badges(all);
     } catch (e: any) {
@@ -4313,7 +4322,7 @@ export function TeamPage(props: {
                 {error ? "Channels unavailable — the hub is unreachable. Retrying automatically; check that the hub is running if this persists." : "Loading channels…"}
               </div>
             ) : null}
-            {channels.filter((c) => !c.name.startsWith("dm:")).map((c) => {
+            {channels.filter((c) => c.member && !c.name.startsWith("dm:")).map((c) => {
               const b = badges[c.name];
               const arming = archive_nudge === c.name;
               return (
@@ -4411,7 +4420,7 @@ export function TeamPage(props: {
             {(() => {
               // Direct messages: the operator's own dm:* channels (his
               // seat, his ballots — c2240 made them first-class here).
-              const dms = channels.filter((c) => c.name.startsWith("dm:"));
+              const dms = channels.filter((c) => c.member && c.name.startsWith("dm:"));
               if (!dms.length) return null;
               return (
                 <>

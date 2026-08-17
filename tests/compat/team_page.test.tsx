@@ -131,6 +131,25 @@ function render_page(): void {
   render(<TeamPage advisor={make_advisor()} />);
 }
 
+describe("member-scoped channel selection", () => {
+  it("opens the newest readable channel and omits public rooms the seat cannot read", async () => {
+    const fetch_mock = stub_hub({
+      channels: [
+        { name: "optimize-code", private: false, member: false, member_count: 6, last_seq: 80, last_at: 20 },
+        { name: "agora-wui-work", private: false, member: true, member_count: 7, last_seq: 40, last_at: 10 },
+      ],
+    });
+    render_page();
+
+    await screen.findByText((_, element) => Boolean(element?.className?.includes?.("team_pane_title") && element.textContent === "#agora-wui-work"));
+    expect(screen.queryByText("#optimize-code")).toBeNull();
+    await waitFor(() => {
+      expect(fetch_mock.mock.calls.some(([url]: any[]) => String(url).includes("/channels/agora-wui-work/messages"))).toBe(true);
+      expect(fetch_mock.mock.calls.some(([url]: any[]) => String(url).includes("/channels/optimize-code/messages"))).toBe(false);
+    });
+  });
+});
+
 describe("hub-wide search (agora-0132, hub ≥ 0.12.44)", () => {
   const empty = { hits: [], shown: 0, total: 0 };
   const report = (over: Record<string, any> = {}) => ({

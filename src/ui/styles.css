@@ -48,7 +48,10 @@ body,
   -moz-osx-font-smoothing: grayscale;
 }
 
-.wui_app { height: 100%; }
+/* TeamPage expects the same bounded flex parent that Continuum's shell
+   provides. Without it, the page grows past the hidden document and its
+   internal message pane has no scrollable height. */
+.wui_app { height: 100%; min-height: 0; display: flex; }
 .wui_disconnect { position: fixed; right: 12px; bottom: 12px; z-index: 20; font-size: 12px; opacity: 0.75; }
 .wui_bootstrap { min-height: 100%; display: grid; place-items: center; padding: 24px; background: var(--bg-primary); }
 .wui_bootstrap_card { width: min(520px, 100%); padding: 28px; border: 1px solid var(--ui-border-1); border-radius: 14px; background: var(--bg-secondary); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25); }
