@@ -15,7 +15,7 @@
 
 ## README.md
 
-Agora WUI is a framework-agnostic React Teams interface for Agora Hub. It is the web companion to `agora` and `agora-tui`. It exports a Team interface and native Hub client, contains no application server or framework runtime dependency, and uses no alternate data-service path. Thread roots can fold their complete reply trail into a compact accessible panel, while filter tabs remain the single attention summary.
+Agora WUI is a framework-agnostic React Teams interface for Agora Hub. It is the web companion to `agora` and `agora-tui`. It exports a Team interface and native Hub client, contains no application server or framework runtime dependency, and uses no alternate data-service path. Each root is a separate thread card with a top-right fold chevron and compact Hub-derived badges. Opening a card shows its complete loaded trail; message actions appear in a lower-right hover/focus rail, while filter tabs remain the single channel-level attention summary.
 
 Build with `npm install` followed by `npm run build`. WUI is a static direct client: it imports a user-selected existing Agora key-cache entry or accepts a seat key in tab memory, never persists it, and calls Hub routes directly. Browser WebSockets use Agora's documented `/ws?token=KEY` lane. Same-origin static hosting works directly; a separate static origin needs Hub-owned opt-in CORS, never a WUI proxy.
 
@@ -23,13 +23,13 @@ Build with `npm install` followed by `npm run build`. WUI is a static direct cli
 
 ## docs/getting-started.md
 
-Use Node.js 20 or later and an Agora Hub speaking `agora/0.4`. Import `HubClient` and `TeamPage` into a React host. A bearer is an existing Agora seat key held only in memory; the standalone page can import a user-selected `~/.agora/keys.json` entry. Cross-origin browser deployment needs explicit Hub CORS permission. Use **fold thread** to collapse a root and all replies; an active filter keeps matching trails visible. AI integration is optional, host-owned, and read-only.
+Use Node.js 20 or later and an Agora Hub speaking `agora/0.4`. Import `HubClient` and `TeamPage` into a React host. A bearer is an existing Agora seat key held only in memory; the standalone page can import a user-selected `~/.agora/keys.json` entry. Cross-origin browser deployment needs explicit Hub CORS permission. Each root is a thread card: its top-right chevron folds the loaded trail or opens every loaded message. The header presents Hub-derived useful badges, and message actions appear on hover or keyboard focus. An active filter keeps matching trails visible. AI integration is optional, host-owned, and read-only.
 
 ---
 
 ## docs/architecture.md
 
-Agora WUI owns React presentation, safe rendering, bounded local UI state, and native-Hub request shaping. Agora Hub owns identity, authorization, collaboration state, attachments, reputation, and protocol compatibility. WUI uses Hub-provided viewer cues such as `to_me` and forwards protocol data rather than recreating collaboration policy. Folded panels and filters are presentation state only, and the filter tabs are the single attention summary. A host may supply an existing in-memory seat key, an AI advisor, and navigation callbacks. Continuum can compose the public React component without creating a framework dependency inside Agora WUI.
+Agora WUI owns React presentation, safe rendering, bounded local UI state, and native-Hub request shaping. Agora Hub owns identity, authorization, collaboration state, attachments, reputation, and protocol compatibility. WUI uses Hub-provided viewer cues such as `to_me` and forwards protocol data rather than recreating collaboration policy. Folded thread cards and filters are presentation state only; card badges present Hub-served state, and the filter tabs are the single attention summary. A host may supply an existing in-memory seat key, an AI advisor, and navigation callbacks. Continuum can compose the public React component without creating a framework dependency inside Agora WUI.
 
 ---
 
@@ -45,4 +45,4 @@ Agora WUI owns React presentation, safe rendering, bounded local UI state, and n
 
 Agora WUI does not run a backend and does not depend on AbstractFramework. Polling is the complete fallback when the direct Hub WebSocket is unavailable. Cross-origin Vite-to-local-Hub access requires the Hub's opt-in CORS configuration. Attachments are fetched through the authenticated Hub client and rendered with temporary object URLs.
 
-Use **fold thread** to collapse a root and every reply into a compact parent panel. The existing **Unread**, **Asks**, and **Needs vigilance** tabs are the only attention summary.
+Use the top-right chevron on a thread card to fold its loaded trail into a compact summary or open every loaded message. The existing **Unread**, **Asks**, and **Needs vigilance** tabs are the only channel-level attention summary.

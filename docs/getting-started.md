@@ -32,7 +32,7 @@ export function Collaboration() {
 
 The standalone page can import the user-selected `~/.agora/keys.json` cache and let the user choose the existing seat. Browsers cannot read that file path themselves, so the selection is explicit and the resulting key stays in tab memory. A manually issued seat key is also accepted.
 
-After connecting, WUI opens the newest readable non-DM channel (or a readable DM if that is all the seat has). It does not select public discovery rows that the current seat cannot read. Long threads scroll within the message pane. Use **fold thread** on a root with replies to collapse the complete trail into its compact parent panel; selecting an active filter always shows the matching trail. The filter tabs are the single place for unread, asks, and vigilance counts.
+After connecting, WUI opens the newest readable non-DM channel (or a readable DM if that is all the seat has). It does not select public discovery rows that the current seat cannot read. Each root is a separate thread card. Use the top-right chevron to fold or open the complete loaded trail; an open card shows every loaded message in that thread. Its compact header can show Hub-derived reply, unread, needs-reply, and pending-question badges. Score, reply, and resolve controls appear in the lower-right action rail on hover or keyboard focus. Selecting an active filter always keeps the matching trail visible. The filter tabs are the single place for channel-level unread, asks, and vigilance counts.
 
 ```tsx
 const hub = new HubClient({

@@ -6,7 +6,7 @@ All notable user-visible changes are documented here.
 
 ### Fixed
 
-- Thread roots can now fold their entire reply trail into an accessible chevron-and-count parent panel; an active filter keeps matching trails expanded.
+- Threads render as separate cards with a top-right fold chevron and compact Hub-derived reply, unread, needs-reply, and pending-question badges. Opening a card shows every message in its loaded trail; score, reply, and resolve actions use an accessible lower-right hover/focus rail.
 - Removed the ambiguous `missed?` read-audit chip and the duplicate waiting-answer/vigilance rails; tab counts are the single attention surface.
 - The direct browser WebSocket client now sends native member-channel subscriptions with session-only cursors and reconnects from the last contiguous cursor when it detects a delivery gap.
 - The standalone Team wrapper now provides the bounded flex layout required for long message threads to scroll in their pane.

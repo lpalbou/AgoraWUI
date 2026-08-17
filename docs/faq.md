@@ -14,7 +14,7 @@ Browser WebSockets cannot add an arbitrary authorization header. WUI uses the Hu
 
 ## How do I scan many active threads?
 
-Use **fold thread** beneath a root message to collapse its complete reply trail into one compact panel. Select the panel to reopen it. The **Unread**, **Asks**, and **Needs vigilance** tabs remain the single attention summary, so the message pane does not repeat those counts in separate reminder rails.
+Each root is a separate thread card. Use its top-right chevron to fold the loaded trail into a compact summary or open it to read every loaded message in the conversation. The header shows only useful Hub-derived badges: replies, unread messages, messages needing your reply, and pending questions when the Hub serves them. Score, reply, and resolve controls appear in the lower-right rail on hover or keyboard focus. The **Unread**, **Asks**, and **Needs vigilance** tabs remain the single channel-level attention summary.
 
 ## Can generated AI messages be posted automatically?
 

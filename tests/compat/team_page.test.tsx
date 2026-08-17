@@ -959,20 +959,56 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     render_page();
     await screen.findByText("parent topic");
     await screen.findByText("child topic");
-    const fold_control = screen.getByRole("button", { name: /Fold thread: parent topic, 2 messages/ });
-    expect(fold_control.textContent).toBe("▾1");
+    const fold_control = screen.getByRole("button", { name: /Fold thread: parent topic, 2 messages in this loaded view/ });
+    expect(fold_control.textContent).toBe("▾");
+    expect(fold_control.getAttribute("aria-controls")).toBe("thread-fold-root");
     expect(screen.queryByText(/fold thread/i)).toBeNull();
     fireEvent.click(fold_control);
     expect(screen.queryByText("root body")).toBeNull();
     expect(screen.queryByText("child topic")).toBeNull();
-    const panel = screen.getByRole("button", { name: /Expand thread: parent topic, 2 messages/ });
+    const panel = screen.getByRole("button", { name: /Expand thread: parent topic, 2 messages in this loaded view/ });
     expect(panel.getAttribute("aria-expanded")).toBe("false");
+    expect(panel.hasAttribute("aria-controls")).toBe(false);
     fireEvent.click(panel);
     await screen.findByText("parent topic");
     expect(screen.getByText("child topic")).toBeTruthy();
   });
 
-  it("uses a compact +N chip to reveal earlier replies", async () => {
+  it("renders separate thread cards with only Hub-derived header badges", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "card-root", seq: 1, sender: "core", status: "open", title: "needs a decision", body: "root", pending_asks: ["1"], read: false, reply_to: null },
+        { ...base, id: "card-reply", seq: 2, sender: "gateway", status: "reply", title: "answer", body: "reply", pending_asks: ["2", "3"], read: false, reply_to: "card-root" },
+        { ...base, id: "card-other", seq: 3, sender: "uic", status: "fyi", title: "separate unit", body: "other", reply_to: null },
+      ],
+      inbox: [{ channel: "commons", seq: 2, status: "reply", addressed: false, to_me: false }],
+    });
+    render_page();
+    await screen.findByText("needs a decision");
+    expect(document.querySelectorAll("article.team_thread_card")).toHaveLength(2);
+    expect(screen.getByLabelText("1 reply in this loaded view")).toBeTruthy();
+    expect(screen.getByLabelText("1 unread message in this loaded view")).toBeTruthy();
+    expect(screen.getByLabelText("3 pending questions served by the Hub")).toBeTruthy();
+    expect(screen.getByTitle("1 reply in this loaded view")).toBeTruthy();
+    expect(screen.getByTitle("1 unread message in this loaded view")).toBeTruthy();
+    expect(screen.getByTitle("3 pending questions served by the Hub")).toBeTruthy();
+    expect(screen.queryByText("missed?")).toBeNull();
+  });
+
+  it("keeps message actions in the keyboard-reachable bottom-right rail", async () => {
+    stub_hub({
+      messages: [{ ...base, id: "rail-root", seq: 1, sender: "core", status: "open", title: "actionable", body: "actionable", reply_to: null, ratings: { up: 0, down: 0, mine: 0 } }],
+    });
+    render_page();
+    await screen.findByText("actionable");
+    const rail = document.querySelector(".team_row_rail");
+    expect(rail).toBeTruthy();
+    expect(screen.getByRole("button", { name: "+1 this message" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "−1 this message" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "↩ Reply" })).toBeTruthy();
+  });
+
+  it("renders every loaded reply when a thread is open", async () => {
     stub_hub({
       messages: [
         { ...base, id: "root", seq: 1, sender: "core", status: "open", title: "topic", body: "root", reply_to: null },
@@ -983,12 +1019,20 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
       ],
     });
     render_page();
-    await screen.findByText("third");
-    expect(screen.queryByText("first")).toBeNull();
-    const more = screen.getByRole("button", { name: "Show 2 earlier replies" });
-    expect(more.textContent).toBe("+2");
-    fireEvent.click(more);
     await screen.findByText("first");
+    expect(screen.getByText("second")).toBeTruthy();
+    expect(screen.getByText("third")).toBeTruthy();
+    expect(screen.getByText("fourth")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Show 2 earlier replies" })).toBeNull();
+  });
+
+  it("does not hide long message content behind a second disclosure", async () => {
+    stub_hub({
+      messages: [{ ...base, id: "long-root", seq: 1, sender: "core", status: "open", title: "long root", body: "x".repeat(600), reply_to: null }],
+    });
+    render_page();
+    await screen.findByText("x".repeat(600));
+    expect(screen.queryByRole("button", { name: "Show the full message" })).toBeNull();
   });
 
   it("filters by category at thread level (Asks keeps the trail; FYI hides it)", async () => {

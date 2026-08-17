@@ -70,13 +70,6 @@ const PAGE_LIMIT = 200;
  *  (ratings, discharge, retraction) refresh on loaded rows (dm 150 /
  *  adversary C F2). */
 const RATING_REFRESH_TAIL = 50;
-/** Clamp heuristics: bodies longer than this get the CSS line-clamp +
- *  "read full" affordance. Rendering is ALWAYS the full markdown — CSS
- *  clamps visually, so a sliced code fence can never corrupt the render
- *  (adversary consensus find). */
-const ROOT_CLAMP = 380;
-const REPLY_CLAMP = 240;
-const COLLAPSED_REPLIES = 2;
 const BADGE_DIGEST_LIMIT = 12;
 
 /** Attachment limits (agora 0091 contract): mirror the hub caps so the
@@ -447,10 +440,6 @@ export function TeamPage(props: {
   const backfill_attempted = useRef<string>("");
   const [error, set_error] = useState("");
   const [loading, set_loading] = useState(false);
-  /** Message ids expanded by explicit click (fires read_message once). */
-  const [expanded, set_expanded] = useState<Record<string, boolean>>({});
-  /** Threads whose full reply trail is unfolded. */
-  const [unfolded, set_unfolded] = useState<Record<string, boolean>>({});
   /** Thread panels deliberately folded by the reader in this channel view. */
   const [folded_threads, set_folded_threads] = useState<Record<string, boolean>>({});
   const read_fired = useRef<Set<string>>(new Set());
@@ -1179,8 +1168,6 @@ export function TeamPage(props: {
 
   useEffect(() => {
     chan_gen.current += 1;
-    set_expanded({});
-    set_unfolded({});
     set_folded_threads({});
     read_fired.current = new Set();
     set_verify_state(null);
@@ -1444,25 +1431,13 @@ export function TeamPage(props: {
     }
   }
 
-  function toggle_expand(m: HubMessage): void {
-    const next = !expanded[m.id];
-    set_expanded((cur) => ({ ...cur, [m.id]: next }));
-    // Explicit open = the hub's read_message record (critical unpin rides
-    // it, c1696 rule 2). Once per message per mount; never moves cursors.
-    if (next) fire_read(m);
-  }
-
-  /** Row click: expand/collapse + read tracking. Selection-aware — a
-   *  click that ends a text selection never toggles (adversary find: the
-   *  11px "read full" link was the only read affordance, and SHORT
-   *  critical messages had none at all, staying pinned forever). */
+  /** Row click records Hub read state. Open threads never clamp message
+   *  bodies: the thread chevron is the one disclosure control for its
+   *  conversation, so readers do not have to hunt for a second expander. */
   function row_click(m: HubMessage): void {
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
-    const body = String(m.body || "");
-    const clamp = m.status === "reply" ? REPLY_CLAMP : ROOT_CLAMP;
-    if (body.length > clamp) toggle_expand(m);
-    else fire_read(m); // short message: no visual change, the read still records
+    fire_read(m);
   }
 
   /** Fetch the channel's verbatim ledger and recompute the WHOLE hash
@@ -3836,11 +3811,7 @@ export function TeamPage(props: {
   }
 
   function render_msg_body(m: HubMessage, opts: { is_root: boolean }): React.ReactElement {
-    const is_open = Boolean(expanded[m.id]);
     const body = String(m.body || "");
-    const clamp = opts.is_root ? ROOT_CLAMP : REPLY_CLAMP;
-    const long = body.length > clamp;
-    const clamped = long && !is_open;
     const asks = m.data?.asks || [];
     const unread = Boolean(filter_ctx.unread_seqs?.has(m.seq));
     const highlight = filter !== "all" && msg_matches_filter(m, filter, filter_ctx);
@@ -3852,11 +3823,11 @@ export function TeamPage(props: {
     const replying = reply_to?.id === m.id;
     return (
       <div
-        className={`team_row ${m.sender === seat ? "own" : ""} ${highlight ? "hit" : ""} ${replying ? "replying" : ""} ${unread ? "unread" : ""} ${m.retracted ? "retracted" : ""}`}
+        className={`team_row ${can_post ? "has_actions" : ""} ${m.sender === seat ? "own" : ""} ${highlight ? "hit" : ""} ${replying ? "replying" : ""} ${unread ? "unread" : ""} ${m.retracted ? "retracted" : ""}`}
         key={m.id}
         id={`hubmsg-${m.id}`}
         onClick={() => row_click(m)}
-        title={long ? undefined : m.critical ? "Click to record the read (critical unpins on it)" : undefined}
+        title={m.critical ? "Click to record the read (critical unpins on it)" : undefined}
       >
         {/* Identity anchor: hue-stable initial (the same hash that colors
             the name) — scanning a busy channel by color beats re-reading
@@ -3932,11 +3903,9 @@ export function TeamPage(props: {
             </span>
           </div>
           {title && !title_is_echo ? <div className="team_row_title">{title}</div> : null}
-          {/* Full markdown ALWAYS renders; CSS line-clamp handles the
-              preview. A char-slice fed to the renderer shredded code
-              fences (adversary consensus). Bare URLs autolink for display
-              (operator dm 39/44): hub-internal images embed, the rest
-              become clickable links — the stored message never changes. */}
+          {/* Full markdown always renders in an open thread. A char-slice
+              would shred code fences, and a second per-message disclosure
+              made it impossible to see a thread as one conversation. */}
           {/* MemoMarkdown (backlog 0010): message text is immutable once
               posted, so the memo boundary skips the markdown re-parse for
               unchanged rows when new traffic re-renders the page — the
@@ -3944,7 +3913,7 @@ export function TeamPage(props: {
               inserts paragraph breaks into single-paragraph report walls
               (whitespace only, words verbatim) so the dm-116 rhythm has
               something to work with. */}
-          <div className={`team_row_body ${clamped ? (opts.is_root ? "clamp_root" : "clamp_reply") : ""}`}>
+          <div className="team_row_body">
             <MemoMarkdown className="md_doc" text={neutralize_unsafe_embeds(autolink_body(reflow_prose_walls(body), { hub_base: hub_url }))} />
           </div>
           {render_attachments(m)}
@@ -4023,21 +3992,6 @@ export function TeamPage(props: {
               ))}
             </div>
           ) : null}
-          {long ? (
-            <button
-              className="team_message_disclosure"
-              type="button"
-              aria-expanded={is_open}
-              aria-label={is_open ? "Collapse this message" : "Show the full message"}
-              title={is_open ? "Collapse this message" : "Show the full message"}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggle_expand(m);
-              }}
-            >
-              <span aria-hidden="true">{is_open ? "▴" : "▾"}</span>
-            </button>
-          ) : null}
         </div>
         {/* Hover action rail: a real click target for the row's acts —
             the always-on 11px links measured as the page's primary
@@ -4064,6 +4018,7 @@ export function TeamPage(props: {
                       <button
                         className={`btn btn_icon team_thumb ${tally.mine > 0 ? "up_on" : ""}`}
                         title={tally.mine > 0 ? "Withdraw your +1 on this message" : "+1 this message"}
+                        aria-label={tally.mine > 0 ? "Withdraw your +1 on this message" : "+1 this message"}
                         disabled={Boolean(reaction_busy)}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -4076,6 +4031,7 @@ export function TeamPage(props: {
                       <button
                         className={`btn btn_icon team_thumb ${tally.mine < 0 ? "down_on" : ""}`}
                         title={tally.mine < 0 ? "Withdraw your −1 on this message" : "−1 this message"}
+                        aria-label={tally.mine < 0 ? "Withdraw your −1 on this message" : "−1 this message"}
                         disabled={Boolean(reaction_busy)}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -4163,71 +4119,83 @@ export function TeamPage(props: {
     const folded = filter === "all" && Boolean(folded_threads[t.root.id]);
     const thread_count = n + 1;
     const thread_label = String(t.root.title || "").trim() || String(t.root.body || "").replace(/\s+/g, " ").trim() || "(no text)";
-    if (folded) {
-      return (
-        <div className="team_thread_group team_thread_group_folded" key={t.root.id}>
+    // Thread header counts deliberately stay within the Hub's loaded window.
+    // They are presentation of Hub-served state, never local collaboration
+    // inference: `new` is the precise inbox cursor, `needs you` is the Hub
+    // debt set, and questions only appear when the Hub served pending_asks.
+    const thread_messages = [t.root, ...t.replies];
+    const unread_count = thread_messages.filter((m) => Boolean(filter_ctx.unread_seqs?.has(m.seq))).length;
+    const debt_count = thread_messages.filter((m) => Boolean(debt_map[m.channel]?.has(m.seq))).length;
+    const pending_question_count = thread_messages.reduce(
+      (count, m) => count + (Array.isArray(m.pending_asks) ? m.pending_asks.filter(Boolean).length : 0),
+      0,
+    );
+    const content_id = `thread-${t.root.id}`;
+    const toggle_thread = () => set_folded_threads((cur) => ({ ...cur, [t.root.id]: !folded }));
+    const thread_header = (
+      <div className={`team_thread_card_header ${folded ? "folded" : ""}`}>
+        <div className="team_thread_identity" title={`${t.root.sender}: ${thread_label}`}>
+          <span className="team_thread_sender" style={sender_style(t.root.sender)}>{t.root.sender}</span>
+          <span className="team_thread_preview" aria-hidden="true" data-preview={thread_label} />
+        </div>
+        <div className="team_thread_utilities">
+          {n > 0 ? (
+            <span className="team_thread_stat" aria-label={`${n} ${n === 1 ? "reply" : "replies"} in this loaded view`} title={`${n} ${n === 1 ? "reply" : "replies"} in this loaded view`}>
+              <span aria-hidden="true">↩</span> {n}
+            </span>
+          ) : null}
+          {unread_count > 0 ? (
+            <span className="team_thread_stat new" aria-label={`${unread_count} unread ${unread_count === 1 ? "message" : "messages"} in this loaded view`} title={`${unread_count} unread ${unread_count === 1 ? "message" : "messages"} in this loaded view`}>
+              <span aria-hidden="true">●</span> {unread_count}
+            </span>
+          ) : null}
+          {debt_count > 0 ? (
+            <span className="team_thread_stat debt" aria-label={`${debt_count} ${debt_count === 1 ? "message needs" : "messages need"} your reply`} title={`${debt_count} ${debt_count === 1 ? "message needs" : "messages need"} your reply`}>
+              <span aria-hidden="true">!</span> {debt_count}
+            </span>
+          ) : null}
+          {pending_question_count > 0 ? (
+            <span className="team_thread_stat ask" aria-label={`${pending_question_count} pending ${pending_question_count === 1 ? "question" : "questions"} served by the Hub`} title={`${pending_question_count} pending ${pending_question_count === 1 ? "question" : "questions"} served by the Hub`}>
+              <span aria-hidden="true">?</span> {pending_question_count}
+            </span>
+          ) : null}
           <button
-            className="team_thread_disclosure"
+            className="team_thread_toggle"
             type="button"
-            onClick={() => set_folded_threads((cur) => ({ ...cur, [t.root.id]: false }))}
-            aria-expanded={false}
-            aria-label={`Expand thread: ${thread_label}, ${thread_count} messages`}
-            title="Expand this thread"
+            onClick={toggle_thread}
+            disabled={filter !== "all"}
+            aria-controls={folded ? undefined : content_id}
+            aria-expanded={!folded}
+            aria-label={`${folded ? "Expand" : "Fold"} thread: ${thread_label}, ${thread_count} messages in this loaded view`}
+            title={filter !== "all" ? "Clear the filter before folding; matching messages stay visible" : folded ? "Expand this thread" : "Fold this thread"}
           >
-            <span className="team_thread_disclosure_chevron" aria-hidden="true">▸</span>
-            <span className="team_thread_disclosure_sender">{t.root.sender}</span>
-            <span className="team_thread_disclosure_preview">{thread_label}</span>
-            <span className="team_thread_disclosure_count" title={`${n} ${n === 1 ? "reply" : "replies"}`}>{n}</span>
+            <span className="team_thread_toggle_chevron" aria-hidden="true">{folded ? "▸" : "▾"}</span>
           </button>
         </div>
+      </div>
+    );
+    if (folded) {
+      return (
+        <article className="team_thread_group team_thread_card team_thread_group_folded" key={t.root.id} aria-label={`Thread: ${thread_label}`}>
+          {thread_header}
+        </article>
       );
     }
-    const open_all = Boolean(unfolded[t.root.id]);
-    // Under an active filter the matching replies must be VISIBLE — a
-    // filter that points at a hidden message is a broken loop (adversary
-    // find), so filters disable the collapse window.
-    const shown =
-      open_all || filter !== "all" || n <= COLLAPSED_REPLIES + 1 ? t.replies : t.replies.slice(n - COLLAPSED_REPLIES);
-    const hidden = n - shown.length;
     const s = summaries[t.root.id];
     return (
-      <div className={`team_thread_group ${n ? "has_replies" : ""}`} key={t.root.id}>
-        {t.orphan ? (
-          <div className="team_orphan mono" title="The parent message is older than the fetched window — the trail starts mid-flight.">
-            ↩ reply to an earlier message (outside the window)
-          </div>
-        ) : null}
-        {render_msg(t.root, { is_root: true })}
-        {/* Compact thread chrome. The chevron owns whole-thread folding;
-            the optional +N chip reveals older replies without sentence-like
-            action copy in the scan path. */}
-        {hidden > 0 || n > 0 || String(t.root.body || "").length > ROOT_CLAMP ? (
-          <div className="team_trail_bar">
-            {n > 0 ? (
-              <button
-                className="team_thread_toggle"
-                type="button"
-                onClick={() => set_folded_threads((cur) => ({ ...cur, [t.root.id]: true }))}
-                aria-expanded={true}
-                aria-label={`Fold thread: ${thread_label}, ${thread_count} messages`}
-                title="Fold this parent and all of its replies"
-              >
-                <span className="team_thread_toggle_chevron" aria-hidden="true">▾</span>
-                <span className="team_thread_toggle_count" title={`${n} ${n === 1 ? "reply" : "replies"}`}>{n}</span>
-              </button>
-            ) : null}
-            {hidden > 0 ? (
-              <button
-                className="team_thread_more"
-                type="button"
-                onClick={() => set_unfolded((cur) => ({ ...cur, [t.root.id]: true }))}
-                aria-label={`Show ${hidden} earlier ${hidden === 1 ? "reply" : "replies"}`}
-                title={`Show ${hidden} earlier ${hidden === 1 ? "reply" : "replies"}`}
-              >
-                +{hidden}
-              </button>
-            ) : null}
-            {ai_available && (n > 0 || String(t.root.body || "").length > ROOT_CLAMP) ? (
+      <article className={`team_thread_group team_thread_card ${n ? "has_replies" : ""}`} key={t.root.id} aria-label={`Thread: ${thread_label}`}>
+        {thread_header}
+        <div className="team_thread_content" id={content_id}>
+          {t.orphan ? (
+            <div className="team_orphan mono" title="The parent message is older than the fetched window — the trail starts mid-flight.">
+              ↩ reply to an earlier message (outside the window)
+            </div>
+          ) : null}
+          {render_msg(t.root, { is_root: true })}
+          {/* The open card renders the complete loaded thread. Folding lives
+              once in the header; there is no second hidden reply window. */}
+          {ai_available && n > 0 ? (
+            <div className="team_trail_bar">
               <button
                 className="team_thread_tool team_summarize"
                 disabled={Boolean(s?.busy)}
@@ -4238,30 +4206,30 @@ export function TeamPage(props: {
                 <span aria-hidden="true">✦</span>
                 <span>{thread_count}</span>
               </button>
-            ) : null}
-          </div>
-        ) : null}
-        {n > 0 ? (
-          <div className="team_replies">{shown.map((r) => render_msg(r, { is_root: false }))}</div>
-        ) : null}
-        {s?.text ? (
-          <div className="team_summary">
-            <div className="team_summary_head">
-              <span>
-                AI summary — {s.count} message{s.count === 1 ? "" : "s"}
-              </span>
-              <button
-                className="team_row_expand"
-                onClick={() => set_summaries((cur) => ({ ...cur, [t.root.id]: { busy: false, text: "", error: "", count: 0 } }))}
-              >
-                dismiss
-              </button>
             </div>
-            <Markdown className="md_doc" text={neutralize_unsafe_embeds(s.text)} />
-          </div>
-        ) : null}
-        {s?.error ? <div className="page_error mono">{s.error}</div> : null}
-      </div>
+          ) : null}
+          {n > 0 ? (
+            <div className="team_replies">{t.replies.map((r) => render_msg(r, { is_root: false }))}</div>
+          ) : null}
+          {s?.text ? (
+            <div className="team_summary">
+              <div className="team_summary_head">
+                <span>
+                  AI summary — {s.count} message{s.count === 1 ? "" : "s"}
+                </span>
+                <button
+                  className="team_row_expand"
+                  onClick={() => set_summaries((cur) => ({ ...cur, [t.root.id]: { busy: false, text: "", error: "", count: 0 } }))}
+                >
+                  dismiss
+                </button>
+              </div>
+              <Markdown className="md_doc" text={neutralize_unsafe_embeds(s.text)} />
+            </div>
+          ) : null}
+          {s?.error ? <div className="page_error mono">{s.error}</div> : null}
+        </div>
+      </article>
     );
   }
 

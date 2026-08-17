@@ -1625,74 +1625,105 @@ button.primary:hover:not(:disabled) {
   background: var(--bg-tertiary);
 }
 
-/* Thread group: one trail (root + replies) reads as one unit. */
+/* A thread is a first-class, independently scannable collaboration unit.
+   The card deliberately does not clip overflow: each message owns a
+   hover/focus action dock that must remain reachable beyond its text. */
 .team_thread_group {
-  border-bottom: 1px solid var(--bg-tertiary);
-  padding: 6px 2px 8px;
+  margin: 10px 0;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 12px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--bg-secondary) 60%, transparent);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.1);
 }
 
 .team_thread_group_folded {
-  padding: 5px 2px;
+  background: color-mix(in srgb, var(--bg-secondary) 42%, transparent);
 }
 
-.team_thread_disclosure {
+.team_thread_card_header {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 38px;
-  padding: 7px 10px;
-  border: 1px solid var(--bg-tertiary);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.02);
-  color: var(--text-primary);
-  cursor: pointer;
-  text-align: left;
+  gap: 10px;
+  min-height: 32px;
+  padding: 1px 2px 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--bg-tertiary) 78%, transparent);
 }
 
-.team_thread_disclosure:hover {
-  border-color: rgba(148, 163, 184, 0.5);
-  background: rgba(255, 255, 255, 0.04);
+.team_thread_card_header.folded {
+  padding-bottom: 1px;
+  margin-bottom: 0;
+  border-bottom: 0;
 }
 
-.team_thread_disclosure:focus-visible {
-  outline: 2px solid var(--accent, #79c7ff);
-  outline-offset: 2px;
+.team_thread_identity {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
 }
 
-.team_thread_disclosure_chevron,
-.team_thread_disclosure_count {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.team_thread_disclosure_count,
-.team_thread_toggle_count {
-  min-width: 20px;
-  padding: 1px 5px;
-  border: 1px solid var(--bg-tertiary);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
-.team_thread_disclosure_sender {
-  color: var(--text-secondary);
+.team_thread_sender {
+  flex: 0 0 auto;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: 700;
 }
 
-.team_thread_disclosure_preview {
+.team_thread_preview {
   min-width: 0;
   overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.team_thread_group > .team_row .team_row_body {
+.team_thread_preview::after {
+  content: attr(data-preview);
+}
+
+.team_thread_utilities {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.team_thread_stat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.team_thread_stat.new {
+  border-color: color-mix(in srgb, var(--info, #60a5fa) 55%, transparent);
+  color: var(--info, #60a5fa);
+}
+
+.team_thread_stat.debt {
+  border-color: color-mix(in srgb, var(--warning, #fbbf24) 58%, transparent);
+  color: var(--warning, #fbbf24);
+}
+
+.team_thread_stat.ask {
+  border-color: color-mix(in srgb, var(--accent, #79c7ff) 52%, transparent);
+  color: var(--accent, #79c7ff);
+}
+
+.team_thread_group > .team_thread_content > .team_row .team_row_body {
   color: var(--text-primary);
 }
 
@@ -1700,7 +1731,8 @@ button.primary:hover:not(:disabled) {
   color: var(--text-secondary);
 }
 
-/* Thread controls stay as compact disclosure chrome, not action prose. */
+/* Secondary thread tools stay inside the card; fold/unfold lives once in
+   the header, where it is easy to find before reading the body. */
 .team_trail_bar {
   display: flex;
   gap: 4px;
@@ -1709,9 +1741,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .team_thread_toggle,
-.team_thread_more,
-.team_thread_tool,
-.team_message_disclosure {
+.team_thread_tool {
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -1728,36 +1758,37 @@ button.primary:hover:not(:disabled) {
 }
 
 .team_thread_toggle:hover:not(:disabled),
-.team_thread_more:hover:not(:disabled),
-.team_thread_tool:hover:not(:disabled),
-.team_message_disclosure:hover:not(:disabled) {
+.team_thread_tool:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-secondary);
 }
 
 .team_thread_toggle:focus-visible,
-.team_thread_more:focus-visible,
-.team_thread_tool:focus-visible,
-.team_message_disclosure:focus-visible {
+.team_thread_tool:focus-visible {
   outline: 2px solid var(--accent, #79c7ff);
   outline-offset: 1px;
 }
 
 .team_thread_toggle_chevron {
-  color: var(--text-secondary);
-  font-size: 13px;
+  color: currentColor;
+  font-size: 16px;
+  font-weight: 800;
 }
 
-.team_thread_more {
-  min-width: 24px;
-  border: 1px solid var(--bg-tertiary);
-  border-radius: 999px;
-  font-variant-numeric: tabular-nums;
+.team_thread_toggle {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--accent, #79c7ff) 62%, var(--bg-tertiary));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent, #79c7ff) 16%, var(--bg-tertiary));
+  color: var(--accent, #79c7ff);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
 }
 
-.team_message_disclosure {
-  padding: 2px 0;
-  font-size: 14px;
+.team_thread_toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .team_summarize {
@@ -1772,10 +1803,6 @@ button.primary:hover:not(:disabled) {
 .team_summarize:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-.team_thread_group:last-child {
-  border-bottom: none;
 }
 
 .team_orphan {
@@ -1818,13 +1845,13 @@ button.primary:hover:not(:disabled) {
   min-width: 0;
 }
 
-/* Hover action rail: appears on hover/focus — a real button target
-   instead of the 11px underline links (adversary find). */
+/* Bottom-right message action dock. It is visually quiet until hover, yet
+   remains in the tab order: focus-within reveals it before keyboard use. */
 .team_row_rail {
   position: absolute;
-  top: -14px;
-  right: 8px;
-  display: none;
+  right: 6px;
+  bottom: 5px;
+  display: flex;
   gap: 4px;
   background: var(--bg-secondary);
   border: 1px solid var(--bg-tertiary);
@@ -1832,23 +1859,56 @@ button.primary:hover:not(:disabled) {
   padding: 2px;
   z-index: 2;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 }
 
 .team_row:hover .team_row_rail,
 .team_row:focus-within .team_row_rail {
-  display: flex;
+  opacity: 1;
+  pointer-events: auto;
 }
 
-/* Touch devices have no hover — the rail is always present (critic F3). */
+/* Touch devices have no hover. The same rail becomes a bottom footer with
+   44px targets rather than an inaccessible floating overlay. */
 @media (pointer: coarse) {
+  .team_row {
+    flex-wrap: wrap;
+  }
+
+  .team_row.has_actions {
+    padding-bottom: 3px;
+  }
+
+  .team_row_main {
+    flex-basis: calc(100% - 28px);
+  }
+
   .team_row_rail {
-    display: flex;
     position: static;
+    margin-left: auto;
+    margin-top: 4px;
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     box-shadow: none;
     border: none;
     background: transparent;
     padding: 0;
+    opacity: 1;
+    pointer-events: auto;
   }
+
+  .team_resolve_wrap {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .team_resolve_data {
+    max-width: 100%;
+  }
+
 }
 
 /* Inline reputation thumbs in the row rail (operator dm 16). Hollow =
@@ -1883,6 +1943,15 @@ button.primary:hover:not(:disabled) {
   font-size: var(--font-size-xs);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+@media (pointer: coarse) {
+  .team_row_rail .btn,
+  .team_row_rail .btn.btn_icon {
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
+  }
 }
 
 .team_hub_data {
@@ -2094,42 +2163,6 @@ button.primary:hover:not(:disabled) {
   color: var(--text-secondary);
   overflow-wrap: anywhere;
   max-width: 90ch;
-}
-
-/* Preview clamping is CSS-only: the FULL markdown renders and the box
-   clamps visually — a char-slice fed to the renderer shredded code
-   fences (adversary consensus find).
-   HEIGHT crop, NOT -webkit-line-clamp (operator dm 41): `-webkit-box`
-   forces block children (tables, code fences, lists) into a box-flex
-   context that collapses their layout — a message carrying a markdown
-   TABLE rendered broken in the clamped preview. max-height + overflow
-   crops the SAME content by height while every block keeps its real
-   layout; "show more" removes the cap. A fade signals the crop. */
-.team_row_body.clamp_root,
-.team_row_body.clamp_reply {
-  position: relative;
-  overflow: hidden;
-}
-
-.team_row_body.clamp_root {
-  max-height: 11.5em; /* ~7 lines at the 1.55 report leading (dm 116) */
-}
-
-.team_row_body.clamp_reply {
-  max-height: 6.5em; /* ~4 lines */
-}
-
-/* Bottom fade so a height-cropped preview reads as "there's more". */
-.team_row_body.clamp_root::after,
-.team_row_body.clamp_reply::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1.6em;
-  background: linear-gradient(to bottom, transparent, var(--bg-secondary, var(--bg-primary)));
-  pointer-events: none;
 }
 
 /* Markdown inside rows: kill the default outer margins so rows stay tight. */
