@@ -28,7 +28,7 @@ flowchart LR
 - Browser live updates use the Hub's existing `/ws?token=KEY` route. On open, reconnect, and member-list changes, WUI sends the native `subscribe` frame with only its in-tab received cursors; a sequence gap reconnects from the last contiguous cursor. Without a key or a working socket, `TeamPage` stays functional through polling.
 - Cross-origin browser access is an opt-in Agora Hub CORS concern, not a WUI server concern.
 - The Hub remains the source of truth. WUI consumes viewer-scoped Hub cues such as `to_me`, and forwards optional protocol metadata verbatim; it never re-derives delegation, owed work, evidence, or completion rules.
-- UI state such as expanded messages, active filters, and drafts does not replace Hub collaboration state.
+- UI state such as expanded messages, folded thread panels, active filters, and drafts does not replace Hub collaboration state. Filter tabs summarize attention; WUI does not create a second attention rail from Hub state.
 
 ## Reuse in Continuum
 

@@ -464,39 +464,21 @@ describe("message ratings — ONE reputation system (operator dm 150)", () => {
   });
 });
 
-describe("acked-but-never-read badge (comms-audit ask 1, agora-0130)", () => {
+describe("read-state presentation", () => {
   const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, data: null, reply_to: null };
-  it("badges a swept-unread row (read===false, not in the unread set) as missed", async () => {
+  it("does not render an ambiguous missed badge for a read===false audit row", async () => {
     stub_hub({
       messages: [{ ...base, id: "01SWEPT", seq: 5, sender: "agora", status: "fyi", body: "swept by the burst cursor", read: false }],
       inbox: [], // no unread envelope → cursor already advanced past it
     });
     render_page();
     await screen.findByText("swept by the burst cursor");
-    await screen.findByText("missed?");
-  });
-  it("does NOT badge a genuinely-read row (read===true)", async () => {
-    stub_hub({
-      messages: [{ ...base, id: "01READ", seq: 6, sender: "agora", status: "fyi", body: "actually read", read: true }],
-      inbox: [],
-    });
-    render_page();
-    await screen.findByText("actually read");
-    expect(screen.queryByText("missed?")).toBeNull();
-  });
-  it("does NOT badge on older hubs (read===null/absent)", async () => {
-    stub_hub({
-      messages: [{ ...base, id: "01OLD", seq: 7, sender: "agora", status: "fyi", body: "pre-0130 hub" }],
-      inbox: [],
-    });
-    render_page();
-    await screen.findByText("pre-0130 hub");
     expect(screen.queryByText("missed?")).toBeNull();
   });
 });
 
-describe("answers-waiting-on-you rail (comms-audit ask 2)", () => {
-  it("renders to_consume as an always-visible rail with a jump link", async () => {
+describe("attention stays in the tab system", () => {
+  it("does not duplicate waiting answers or vigilance as top-of-thread rails", async () => {
     stub_hub({
       owed: {
         to_consume: [
@@ -505,56 +487,14 @@ describe("answers-waiting-on-you rail (comms-audit ask 2)", () => {
         to_answer: [],
         counts: { to_consume: 1 },
       },
+      messages: [{ id: "01OPEN", channel: "commons", seq: 1, sender: "agora", kind: "message", status: "open", urgency: "inbox", title: "needs an answer", body: "needs an answer", data: { asks: [{ id: "1", text: "answer" }] }, reply_to: null }],
     });
     render_page();
-    await screen.findByText(/1 answer to your question is waiting/);
-    await screen.findByText(/agora answered/);
-  });
-
-  it("shows nothing when to_consume is empty (feature-detected, no false rail)", async () => {
-    stub_hub({ owed: { to_consume: [], to_answer: [] } });
-    render_page();
-    await screen.findByText(/as laurent/);
-    expect(screen.queryByText(/answers? to your question/)).toBeNull();
-  });
-
-  it("dismiss-all clears the whole rail in one act and PERSISTS (operator dm 173: 148 items, one-at-a-time was unreadable)", async () => {
-    localStorage.clear();
-    const items = [1, 2, 3].map((n) => ({ channel: "commons", answer_id: `01A${n}`, answer_seq: n, answered_by: "agora", title: `answer ${n}` }));
-    stub_hub({ owed: { to_consume: items, to_answer: [], counts: { to_consume: 3 } } });
-    render_page();
-    await screen.findByText(/3 answers to your questions are waiting/);
-    fireEvent.click(screen.getByText("dismiss all"));
-    await waitFor(() => expect(screen.queryByText(/answers to your questions are waiting/)).toBeNull());
-    // Persistence: the dismissal map survives a remount (reload analogue).
-    const stored = JSON.parse(localStorage.getItem("continuum_consume_dismissed_v1") || "{}");
-    expect(Object.keys(stored).sort()).toEqual(["01A1", "01A2", "01A3"]);
-    cleanup();
-    render_page();
-    await screen.findByText(/as laurent/);
-    expect(screen.queryByText(/answers to your questions are waiting/)).toBeNull();
-    localStorage.clear();
-  });
-
-  it("fold collapses the rail to a one-line count that keeps the FACT visible (fold hides the list, never the count)", async () => {
-    localStorage.clear();
-    stub_hub({
-      owed: {
-        to_consume: [{ channel: "commons", answer_id: "01F1", answer_seq: 9, answered_by: "flow", title: "folded row" }],
-        to_answer: [],
-        counts: { to_consume: 1 },
-      },
-    });
-    render_page();
-    await screen.findByText(/flow answered/);
-    fireEvent.click(screen.getByText("fold"));
-    // Folded: the count line stays, the per-item rows are gone, and the
-    // unfold affordance is present.
-    await screen.findByText(/1 answer to your question is waiting/);
-    expect(screen.queryByText(/flow answered/)).toBeNull();
-    fireEvent.click(screen.getByText("show"));
-    await screen.findByText(/flow answered/);
-    localStorage.clear();
+    await screen.findByText("needs an answer");
+    expect(screen.queryByText(/answers? to your question.*waiting/i)).toBeNull();
+    expect(screen.queryByText(/threads? need vigilance/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /^Asks/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Needs vigilance/ })).toBeTruthy();
   });
 });
 
@@ -1007,6 +947,26 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     // 3 messages → 2 threads (the reply folded under its root).
     await screen.findByText(/2 threads/); // live-dot span shares the meta element
     expect(screen.getByText("the answer")).toBeTruthy();
+  });
+
+  it("folds a root and every reply into one expandable thread panel", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "fold-root", seq: 1, sender: "core", status: "open", title: "parent topic", body: "root body", reply_to: null },
+        { ...base, id: "fold-reply", seq: 2, sender: "gateway", status: "reply", title: "child topic", body: "reply body", reply_to: "fold-root" },
+      ],
+    });
+    render_page();
+    await screen.findByText("parent topic");
+    await screen.findByText("child topic");
+    fireEvent.click(screen.getByRole("button", { name: /Fold thread: parent topic, 2 messages/ }));
+    expect(screen.queryByText("root body")).toBeNull();
+    expect(screen.queryByText("child topic")).toBeNull();
+    const panel = screen.getByRole("button", { name: /Expand thread: parent topic, 2 messages/ });
+    expect(panel.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(panel);
+    await screen.findByText("parent topic");
+    expect(screen.getByText("child topic")).toBeTruthy();
   });
 
   it("filters by category at thread level (Asks keeps the trail; FYI hides it)", async () => {

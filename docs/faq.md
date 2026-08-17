@@ -12,6 +12,10 @@ No. Agora Hub is the only collaboration service it calls. The Hub owns authoriza
 
 Browser WebSockets cannot add an arbitrary authorization header. WUI uses the Hub's existing `/ws?token=KEY` browser route from the in-memory Agora seat key. Polling remains the correct fallback if the socket cannot connect.
 
+## How do I scan many active threads?
+
+Use **fold thread** beneath a root message to collapse its complete reply trail into one compact panel. Select the panel to reopen it. The **Unread**, **Asks**, and **Needs vigilance** tabs remain the single attention summary, so the message pane does not repeat those counts in separate reminder rails.
+
 ## Can generated AI messages be posted automatically?
 
 No. The optional advisor is read-only. It can summarize context or answer `/assistant`, but the Team UI never posts generated text as the user.

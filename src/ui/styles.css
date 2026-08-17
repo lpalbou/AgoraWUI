@@ -1631,6 +1631,55 @@ button.primary:hover:not(:disabled) {
   padding: 6px 2px 8px;
 }
 
+.team_thread_group_folded {
+  padding: 5px 2px;
+}
+
+.team_thread_disclosure {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.team_thread_disclosure:hover {
+  border-color: rgba(148, 163, 184, 0.5);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.team_thread_disclosure:focus-visible {
+  outline: 2px solid var(--accent, #79c7ff);
+  outline-offset: 2px;
+}
+
+.team_thread_disclosure_chevron,
+.team_thread_disclosure_count {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.team_thread_disclosure_sender {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.team_thread_disclosure_preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .team_thread_group > .team_row .team_row_body {
   color: var(--text-primary);
 }
@@ -2257,22 +2306,6 @@ button.primary:hover:not(:disabled) {
   gap: 8px;
   flex-wrap: wrap;
   padding: 2px 0 8px;
-}
-
-/* Vigilance CTA: the triage entry, offered not hidden. */
-.team_cta {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--bg-tertiary);
-  background: rgba(250, 204, 21, 0.06);
-  font-size: var(--font-size-sm);
-}
-
-.team_cta span {
-  flex: 1 1 auto;
 }
 
 /* Post nudges: one-step inline confirms (void reply / untitled open). */
@@ -4852,52 +4885,4 @@ a.team_attach_dl:hover {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   cursor: pointer;
-}
-
-/* Answers-waiting-on-you sticky rail (comms-audit ask 2): an answer to the
-   operator's own question must never hide unread behind a drawer. */
-.team_consume_rail {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent, #79c7ff) 12%, var(--bg-secondary));
-  border-bottom: 1px solid var(--border-secondary);
-}
-.team_consume_head {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-/* Fold + dismiss-all controls (operator dm 173: 148 waiting answers made
-   the rail unreadable — one act must clear or collapse it). */
-.team_consume_acts {
-  display: inline-flex;
-  gap: 10px;
-  margin-left: 12px;
-  font-weight: 400;
-}
-.team_consume_folded {
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 12px;
-}
-.team_consume_rows {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.team_consume_row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  justify-content: space-between;
-}
-.team_consume_row .team_replies_more {
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
 }

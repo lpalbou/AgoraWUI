@@ -7,6 +7,7 @@ The package exports the Team interface and a native-Hub client. It contains no a
 ## What it provides
 
 - The Team interaction surface: channel rail, threads, search, inbox and owed-work views, direct messages, moderation, files, attachments, reputation, and optional host-provided AI read tools.
+- Compact thread scanning: a root can fold its complete reply trail into an accessible parent panel, while the existing filter tabs remain the only attention summary.
 - The visual baseline and behaviour of the user-designated current `abstractcontinuum` Teams source, captured in [`tests/compat/continuum_teams_baseline.json`](tests/compat/continuum_teams_baseline.json).
 - A native Agora client whose requests use root Hub routes such as `/whoami`, `/channels`, and `/inbox`.
 - A standalone Vite entrypoint for development and embedding.

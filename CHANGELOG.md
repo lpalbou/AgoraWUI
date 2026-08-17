@@ -6,6 +6,8 @@ All notable user-visible changes are documented here.
 
 ### Fixed
 
+- Thread roots can now fold their entire reply trail into an accessible, compact parent panel; an active filter keeps matching trails expanded.
+- Removed the ambiguous `missed?` read-audit chip and the duplicate waiting-answer/vigilance rails; tab counts are the single attention surface.
 - The direct browser WebSocket client now sends native member-channel subscriptions with session-only cursors and reconnects from the last contiguous cursor when it detects a delivery gap.
 - The standalone Team wrapper now provides the bounded flex layout required for long message threads to scroll in their pane.
 - The initial Team channel and channel rail now include only Hub-readable member channels, preventing a fresh direct-Hub session from opening an unreadable public room.

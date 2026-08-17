@@ -451,6 +451,8 @@ export function TeamPage(props: {
   const [expanded, set_expanded] = useState<Record<string, boolean>>({});
   /** Threads whose full reply trail is unfolded. */
   const [unfolded, set_unfolded] = useState<Record<string, boolean>>({});
+  /** Thread panels deliberately folded by the reader in this channel view. */
+  const [folded_threads, set_folded_threads] = useState<Record<string, boolean>>({});
   const read_fired = useRef<Set<string>>(new Set());
 
   // CHANNEL GENERATION GUARD (adversary P1 cluster): every async
@@ -508,8 +510,6 @@ export function TeamPage(props: {
    *  never lose what the operator is typing. Hydrated once on mount. */
   const drafts = useRef<Record<string, { text: string; title: string; kind: "fyi" | "ask" | "dm" | "group" }>>(load_drafts());
   const prev_channel = useRef("");
-  /** Dismissed vigilance CTA (per channel, per count bucket). */
-  const [vigilance_dismissed, set_vigilance_dismissed] = useState<Record<string, boolean>>({});
   const [posting, set_posting] = useState(false);
   const [ack_busy, set_ack_busy] = useState(false);
   const [notice, set_notice] = useState("");
@@ -1181,6 +1181,7 @@ export function TeamPage(props: {
     chan_gen.current += 1;
     set_expanded({});
     set_unfolded({});
+    set_folded_threads({});
     read_fired.current = new Set();
     set_verify_state(null);
     set_info(null);
@@ -1857,97 +1858,6 @@ export function TeamPage(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.focus]);
 
-  // ---------------------------------------- answers-waiting-on-you (ask 2)
-  // Sticky "answers to your questions are waiting" rail (comms-audit
-  // dm:agora--continuum#102 ask 2): the hub's /owed to_consume lists
-  // answers to the operator's OWN asks he has not opened. Rendered
-  // ALWAYS-VISIBLE (never behind a drawer) so an answer can't hide unread
-  // — the exact failure that made him think the delegate UI was never
-  // built (#155 acked-past-never-read). Feature-detected; hidden when the
-  // hub predates /owed or nothing waits.
-  const [to_consume, set_to_consume] = useState<Array<Record<string, any>>>([]);
-  // Dismissals + fold state PERSIST (operator dm 173: with 148 answers
-  // waiting, one-at-a-time dismissal that resets on reload made the rail
-  // "unreadable" — a dismissal must be an act done once). localStorage,
-  // pruned on every poll to keys the hub still serves so the map cannot
-  // grow unbounded.
-  const [consume_dismissed, set_consume_dismissed] = useState<Record<string, boolean>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("continuum_consume_dismissed_v1") || "{}") || {};
-    } catch {
-      return {};
-    }
-  });
-  const [consume_folded, set_consume_folded_state] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("continuum_consume_folded_v1") === "1";
-    } catch {
-      return false;
-    }
-  });
-  function persist_consume_dismissed(next: Record<string, boolean>): void {
-    set_consume_dismissed(next);
-    try {
-      localStorage.setItem("continuum_consume_dismissed_v1", JSON.stringify(next));
-    } catch {
-      /* private mode etc. — dismissal still applies for this session */
-    }
-  }
-  function set_consume_folded(v: boolean): void {
-    set_consume_folded_state(v);
-    try {
-      localStorage.setItem("continuum_consume_folded_v1", v ? "1" : "0");
-    } catch {
-      /* same degradation as above */
-    }
-  }
-  function load_owed(): void {
-    hub
-      .owed()
-      .then((r) => {
-        const list = Array.isArray(r.to_consume) ? r.to_consume : [];
-        set_to_consume(list);
-        // Prune dismissals the hub no longer serves (opened or withdrawn):
-        // keeps the persisted map bounded by the live to_consume set.
-        set_consume_dismissed((cur) => {
-          const live = new Set(list.map((row: any) => String(row.answer_id || row.id || row.seq)));
-          const next: Record<string, boolean> = {};
-          let changed = false;
-          for (const k of Object.keys(cur)) {
-            if (live.has(k)) next[k] = true;
-            else changed = true;
-          }
-          if (!changed) return cur;
-          try {
-            localStorage.setItem("continuum_consume_dismissed_v1", JSON.stringify(next));
-          } catch {
-            /* non-fatal */
-          }
-          return next;
-        });
-      })
-      .catch(() => {
-        /* pre-/owed Hub: the rail stays hidden, never errors */
-      });
-  }
-  useEffect(() => {
-    load_owed();
-    const t = setInterval(load_owed, 30_000); // same cadence class as badges
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  /** Jump to a to_consume answer: focus its channel + seq (reuses the
-   *  cross-channel anchor), which renders + reads it — the hub then drops
-   *  it from to_consume on the next poll (opened = consumed). */
-  function jump_to_answer(row: Record<string, any>): void {
-    const channel = String(row.channel || "");
-    const seq = Number(row.answer_seq || row.seq || 0);
-    const message_id = String(row.answer_id || "");
-    if (!channel) return;
-    focus_anchor.current = { message_id: message_id || undefined, seq: Number.isFinite(seq) && seq > 0 ? seq : undefined };
-    if (channel === selected) consume_focus_anchor();
-    else set_selected(channel);
-  }
   useEffect(() => {
     consume_focus_anchor();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3222,7 +3132,7 @@ export function TeamPage(props: {
     return sec ? { hits: sec.hits || [], total: sec.total || 0 } : { hits: [], total: 0 };
   }
   /** Message hits jump to their thread (cross-channel: the focus-anchor +
-   *  set_selected pair the Board and to_consume rails already use). The
+   *  set_selected pair the Board already uses). The
    *  search view closes — the jump's whole point is thread context. */
   function jump_to_search_hit(hit: HubSearchHit): void {
     const channel = String(hit.channel || "");
@@ -3990,13 +3900,6 @@ export function TeamPage(props: {
               </>
             ) : unread ? (
               <span className="team_chip_new" title="Unread — your seat has not read past this message yet; clicking the row records the read">new</span>
-            ) : m.read === false ? (
-              // ACKED-BUT-NEVER-READ (comms-audit ask 1, agora-0130): the
-              // ack cursor swept past this row (cursor >= seq) but the hub
-              // has no read record for it — the burst-skip. Badge it so a
-              // swept-unread message can't vanish silently; clicking still
-              // records the read and the pill clears.
-              <span className="team_chip_seen" title="Swept read by the cursor but never opened — you caught the tail of a burst and this one was marked read without being seen. Click to actually read it.">missed?</span>
             ) : null}
             {/* Authorship renders from the WIRE (sender on the envelope),
                 never client state — uic c1706. */}
@@ -4253,6 +4156,28 @@ export function TeamPage(props: {
 
   function render_thread(t: Thread): React.ReactElement {
     const n = t.replies.length;
+    const folded = filter === "all" && Boolean(folded_threads[t.root.id]);
+    const thread_count = n + 1;
+    const thread_label = String(t.root.title || "").trim() || String(t.root.body || "").replace(/\s+/g, " ").trim() || "(no text)";
+    if (folded) {
+      return (
+        <div className="team_thread_group team_thread_group_folded" key={t.root.id}>
+          <button
+            className="team_thread_disclosure"
+            type="button"
+            onClick={() => set_folded_threads((cur) => ({ ...cur, [t.root.id]: false }))}
+            aria-expanded={false}
+            aria-label={`Expand thread: ${thread_label}, ${thread_count} messages`}
+            title="Expand this thread"
+          >
+            <span className="team_thread_disclosure_chevron" aria-hidden="true">▶</span>
+            <span className="team_thread_disclosure_sender">{t.root.sender}</span>
+            <span className="team_thread_disclosure_preview">{thread_label}</span>
+            <span className="team_thread_disclosure_count">{thread_count} messages</span>
+          </button>
+        </div>
+      );
+    }
     const open_all = Boolean(unfolded[t.root.id]);
     // Under an active filter the matching replies must be VISIBLE — a
     // filter that points at a hidden message is a broken loop (adversary
@@ -4275,6 +4200,18 @@ export function TeamPage(props: {
             targets (design critic: the 11px footnote look). */}
         {hidden > 0 || n > 0 || String(t.root.body || "").length > ROOT_CLAMP ? (
           <div className="team_trail_bar">
+            {n > 0 ? (
+              <button
+                className="team_replies_more"
+                type="button"
+                onClick={() => set_folded_threads((cur) => ({ ...cur, [t.root.id]: true }))}
+                aria-expanded={true}
+                aria-label={`Fold thread: ${thread_label}, ${thread_count} messages`}
+                title="Fold this parent and all of its replies"
+              >
+                ▾ fold thread ({thread_count})
+              </button>
+            ) : null}
             {hidden > 0 ? (
               <button className="team_replies_more" onClick={() => set_unfolded((cur) => ({ ...cur, [t.root.id]: true }))}>
                 ↓ {hidden} earlier repl{hidden === 1 ? "y" : "ies"}
@@ -4774,115 +4711,6 @@ export function TeamPage(props: {
               ) : null}
             </span>
           </div>
-
-
-          {/* ANSWERS WAITING ON YOU (comms-audit ask 2): a sticky rail for
-              the hub's /owed to_consume — answers to the operator's OWN
-              asks he has not opened. ALWAYS visible (channel-agnostic),
-              never behind a drawer, so an answer to his question can never
-              hide unread (the #155 incident). Each row jumps to the answer,
-              which reads it → the hub drops it from to_consume next poll. */}
-          {(() => {
-            const rows = to_consume.filter((r) => !consume_dismissed[String(r.answer_id || r.id || r.seq)]);
-            if (!rows.length) return null;
-            const head = rows.length === 1 ? "1 answer to your question is waiting" : `${rows.length} answers to your questions are waiting`;
-            // DISMISS ALL (operator dm 173): one act clears the whole rail.
-            // Client-side visibility only — the hub keeps tracking each
-            // answer until it is actually opened; the tooltip says so.
-            const dismiss_all = () => {
-              const next = { ...consume_dismissed };
-              for (const r of rows) next[String(r.answer_id || r.id || r.seq)] = true;
-              persist_consume_dismissed(next);
-            };
-            // FOLDED: one compact line. The count stays visible — folding
-            // must never make an answer invisible-and-uncounted (the #155
-            // lesson holds: fold hides the LIST, never the fact).
-            if (consume_folded) {
-              return (
-                <div className="team_consume_rail team_consume_folded" role="status">
-                  <span className="team_consume_head">{head}</span>
-                  <span className="team_consume_acts">
-                    <button className="team_replies_more" onClick={() => set_consume_folded(false)} title="Unfold the list of waiting answers">
-                      show
-                    </button>
-                    <button
-                      className="team_replies_more"
-                      onClick={dismiss_all}
-                      title="Dismiss every waiting answer at once. The hub still tracks them until you open each one — they stay reachable in their threads and via search."
-                    >
-                      dismiss all
-                    </button>
-                  </span>
-                </div>
-              );
-            }
-            return (
-              <div className="team_consume_rail" role="status">
-                <span className="team_consume_head">
-                  {head}
-                  <span className="team_consume_acts">
-                    <button className="team_replies_more" onClick={() => set_consume_folded(true)} title="Fold the rail to a one-line count (persists)">
-                      fold
-                    </button>
-                    <button
-                      className="team_replies_more"
-                      onClick={dismiss_all}
-                      title="Dismiss every waiting answer at once. The hub still tracks them until you open each one — they stay reachable in their threads and via search."
-                    >
-                      dismiss all
-                    </button>
-                  </span>
-                </span>
-                <div className="team_consume_rows">
-                  {rows.slice(0, 6).map((r) => {
-                    const key = String(r.answer_id || r.id || r.seq);
-                    const by = String(r.answered_by || "someone");
-                    const where = String(r.channel || "").replace(/^dm:/, "@").replace(/--/g, " ");
-                    const what = String(r.title || (Array.isArray(r.your_asks) ? r.your_asks[0] : "") || "your ask").slice(0, 80);
-                    return (
-                      <span className="team_consume_row" key={key}>
-                        <button className="team_replies_more" title={`Open ${by}'s answer in ${where}`} onClick={() => jump_to_answer(r)}>
-                          {by} answered “{what}” →
-                        </button>
-                        <button
-                          className="btn btn_icon"
-                          aria-label="Dismiss"
-                          title="Dismiss (the hub still tracks it until you open it)"
-                          onClick={() => persist_consume_dismissed({ ...consume_dismissed, [key]: true })}
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    );
-                  })}
-                  {rows.length > 6 ? <span className="muted team_note">+{rows.length - 6} more</span> : null}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Vigilance CTA: offer the triage entry instead of hiding it
-              behind a filter chip (usability critic F7) — dismissible,
-              never auto-applied (auto-switching filters disorients). */}
-          {filter === "all" && (filter_counts.vigilance || 0) > 0 && !vigilance_dismissed[selected] ? (
-            <div className="team_cta">
-              <span>
-                {filter_counts.vigilance} thread{(filter_counts.vigilance || 0) === 1 ? "" : "s"} need vigilance — unanswered asks, critical, or
-                addressed to you.
-              </span>
-              <button className="btn" onClick={() => set_filter("vigilance")}>
-                Review
-              </button>
-              <button
-                className="btn btn_icon"
-                aria-label="Dismiss"
-                title="Dismiss for this channel"
-                onClick={() => set_vigilance_dismissed((cur) => ({ ...cur, [selected]: true }))}
-              >
-                ✕
-              </button>
-            </div>
-          ) : null}
 
           <div className="pane_body team_thread" ref={list_ref}>
             {search_view ? (
