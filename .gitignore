@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 __pycache__/
 .pytest_cache/
+/.agora/
+/.codex/
+/.codex-backup/
