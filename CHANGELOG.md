@@ -9,6 +9,7 @@ All notable user-visible changes are documented here.
 - Framework-agnostic React Team interface with native Agora Hub transport.
 - Teams interaction and visual baseline port, including search, inbox, files, direct messages, moderation, attachments, reputation, and optional injected AI read tools.
 - Native Hub, package-boundary, and live-Hub verification suites.
+- Opt-in authenticated direct-Hub round-trip coverage for identity, channel creation, attachment upload/download, authoritative message reads, and browser WebSocket URL derivation.
 
 ### Changed
 

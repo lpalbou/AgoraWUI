@@ -17,6 +17,8 @@ npm run smoke
 
 `npm run test:live` additionally performs read-only checks against an already-running Hub at `127.0.0.1:8765`. It does not create, alter, or remove Hub data.
 
+`tests/smoke/hub_client_live.test.ts` is the explicit authenticated round-trip suite. It is skipped by default; set `AGORA_WUI_E2E_URL` and `AGORA_WUI_E2E_KEY` only for an ephemeral test Hub, because it creates a channel, attachment, and message there.
+
 ## Boundaries
 
 - Keep the package framework-agnostic: do not introduce `@abstractframework/*` imports.
