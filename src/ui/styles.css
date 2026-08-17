@@ -1667,6 +1667,18 @@ button.primary:hover:not(:disabled) {
   font-size: var(--font-size-xs);
 }
 
+.team_thread_disclosure_count,
+.team_thread_toggle_count {
+  min-width: 20px;
+  padding: 1px 5px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .team_thread_disclosure_sender {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
@@ -1688,12 +1700,64 @@ button.primary:hover:not(:disabled) {
   color: var(--text-secondary);
 }
 
-/* Trail bar: expand + summarize pills at the trail head. */
+/* Thread controls stay as compact disclosure chrome, not action prose. */
 .team_trail_bar {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   padding: 2px 0 2px 34px;
   flex-wrap: wrap;
+}
+
+.team_thread_toggle,
+.team_thread_more,
+.team_thread_tool,
+.team_message_disclosure {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+}
+
+.team_thread_toggle:hover:not(:disabled),
+.team_thread_more:hover:not(:disabled),
+.team_thread_tool:hover:not(:disabled),
+.team_message_disclosure:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+}
+
+.team_thread_toggle:focus-visible,
+.team_thread_more:focus-visible,
+.team_thread_tool:focus-visible,
+.team_message_disclosure:focus-visible {
+  outline: 2px solid var(--accent, #79c7ff);
+  outline-offset: 1px;
+}
+
+.team_thread_toggle_chevron {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.team_thread_more {
+  min-width: 24px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+
+.team_message_disclosure {
+  padding: 2px 0;
+  font-size: 14px;
 }
 
 .team_summarize {

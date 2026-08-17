@@ -959,7 +959,10 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     render_page();
     await screen.findByText("parent topic");
     await screen.findByText("child topic");
-    fireEvent.click(screen.getByRole("button", { name: /Fold thread: parent topic, 2 messages/ }));
+    const fold_control = screen.getByRole("button", { name: /Fold thread: parent topic, 2 messages/ });
+    expect(fold_control.textContent).toBe("▾1");
+    expect(screen.queryByText(/fold thread/i)).toBeNull();
+    fireEvent.click(fold_control);
     expect(screen.queryByText("root body")).toBeNull();
     expect(screen.queryByText("child topic")).toBeNull();
     const panel = screen.getByRole("button", { name: /Expand thread: parent topic, 2 messages/ });
@@ -967,6 +970,25 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     fireEvent.click(panel);
     await screen.findByText("parent topic");
     expect(screen.getByText("child topic")).toBeTruthy();
+  });
+
+  it("uses a compact +N chip to reveal earlier replies", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "root", seq: 1, sender: "core", status: "open", title: "topic", body: "root", reply_to: null },
+        { ...base, id: "r1", seq: 2, sender: "a", status: "reply", title: "first", body: "first", reply_to: "root" },
+        { ...base, id: "r2", seq: 3, sender: "b", status: "reply", title: "second", body: "second", reply_to: "root" },
+        { ...base, id: "r3", seq: 4, sender: "c", status: "reply", title: "third", body: "third", reply_to: "root" },
+        { ...base, id: "r4", seq: 5, sender: "d", status: "reply", title: "fourth", body: "fourth", reply_to: "root" },
+      ],
+    });
+    render_page();
+    await screen.findByText("third");
+    expect(screen.queryByText("first")).toBeNull();
+    const more = screen.getByRole("button", { name: "Show 2 earlier replies" });
+    expect(more.textContent).toBe("+2");
+    fireEvent.click(more);
+    await screen.findByText("first");
   });
 
   it("filters by category at thread level (Asks keeps the trail; FYI hides it)", async () => {

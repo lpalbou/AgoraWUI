@@ -4025,13 +4025,17 @@ export function TeamPage(props: {
           ) : null}
           {long ? (
             <button
-              className="team_row_expand"
+              className="team_message_disclosure"
+              type="button"
+              aria-expanded={is_open}
+              aria-label={is_open ? "Collapse this message" : "Show the full message"}
+              title={is_open ? "Collapse this message" : "Show the full message"}
               onClick={(e) => {
                 e.stopPropagation();
                 toggle_expand(m);
               }}
             >
-              {is_open ? "collapse" : "show more"}
+              <span aria-hidden="true">{is_open ? "▴" : "▾"}</span>
             </button>
           ) : null}
         </div>
@@ -4170,10 +4174,10 @@ export function TeamPage(props: {
             aria-label={`Expand thread: ${thread_label}, ${thread_count} messages`}
             title="Expand this thread"
           >
-            <span className="team_thread_disclosure_chevron" aria-hidden="true">▶</span>
+            <span className="team_thread_disclosure_chevron" aria-hidden="true">▸</span>
             <span className="team_thread_disclosure_sender">{t.root.sender}</span>
             <span className="team_thread_disclosure_preview">{thread_label}</span>
-            <span className="team_thread_disclosure_count">{thread_count} messages</span>
+            <span className="team_thread_disclosure_count" title={`${n} ${n === 1 ? "reply" : "replies"}`}>{n}</span>
           </button>
         </div>
       );
@@ -4194,37 +4198,45 @@ export function TeamPage(props: {
           </div>
         ) : null}
         {render_msg(t.root, { is_root: true })}
-        {/* Trail bar: expand + summarize sit TOGETHER at the trail's head
-            — the summary is most valuable BEFORE reading a long trail
-            (usability critic), and the pill styling makes both real
-            targets (design critic: the 11px footnote look). */}
+        {/* Compact thread chrome. The chevron owns whole-thread folding;
+            the optional +N chip reveals older replies without sentence-like
+            action copy in the scan path. */}
         {hidden > 0 || n > 0 || String(t.root.body || "").length > ROOT_CLAMP ? (
           <div className="team_trail_bar">
             {n > 0 ? (
               <button
-                className="team_replies_more"
+                className="team_thread_toggle"
                 type="button"
                 onClick={() => set_folded_threads((cur) => ({ ...cur, [t.root.id]: true }))}
                 aria-expanded={true}
                 aria-label={`Fold thread: ${thread_label}, ${thread_count} messages`}
                 title="Fold this parent and all of its replies"
               >
-                ▾ fold thread ({thread_count})
+                <span className="team_thread_toggle_chevron" aria-hidden="true">▾</span>
+                <span className="team_thread_toggle_count" title={`${n} ${n === 1 ? "reply" : "replies"}`}>{n}</span>
               </button>
             ) : null}
             {hidden > 0 ? (
-              <button className="team_replies_more" onClick={() => set_unfolded((cur) => ({ ...cur, [t.root.id]: true }))}>
-                ↓ {hidden} earlier repl{hidden === 1 ? "y" : "ies"}
+              <button
+                className="team_thread_more"
+                type="button"
+                onClick={() => set_unfolded((cur) => ({ ...cur, [t.root.id]: true }))}
+                aria-label={`Show ${hidden} earlier ${hidden === 1 ? "reply" : "replies"}`}
+                title={`Show ${hidden} earlier ${hidden === 1 ? "reply" : "replies"}`}
+              >
+                +{hidden}
               </button>
             ) : null}
             {ai_available && (n > 0 || String(t.root.body || "").length > ROOT_CLAMP) ? (
               <button
-                className="team_replies_more team_summarize"
+                className="team_thread_tool team_summarize"
                 disabled={Boolean(s?.busy)}
                 title="LLM summary of this trail (root + replies) — read-only, never posts"
+                aria-label={s?.busy ? "Summarizing this thread" : `Summarize ${thread_count} messages`}
                 onClick={() => void summarize_thread(t)}
               >
-                {s?.busy ? "✦ summarizing…" : `✦ Summarize (${n + 1})`}
+                <span aria-hidden="true">✦</span>
+                <span>{thread_count}</span>
               </button>
             ) : null}
           </div>
