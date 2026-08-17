@@ -45,7 +45,7 @@ const hub = new HubClient({
 
 The bundle calls Agora Hub directly. Same-origin static hosting works with the native Hub routes. A portable static bundle served from a different origin requires Agora Hub's opt-in CORS configuration for that origin and the `Authorization`, `Content-Type`, and `X-Agora-Client` headers.
 
-Browser WebSockets use the existing Hub `/ws?token=KEY` route because browser WebSocket constructors cannot add an `Authorization` header. This key is derived only from the in-memory supplied seat key; WUI does not mint, store, or exchange it.
+Browser WebSockets use the existing Hub `/ws?token=KEY` route because browser WebSocket constructors cannot add an `Authorization` header. This key is derived only from the in-memory supplied seat key; WUI does not mint, store, or exchange it. WUI subscribes its readable channels with session-only received cursors, so a reconnect asks the Hub to replay any live gap; the normal REST poll remains the fallback.
 
 ## Optional AI features
 

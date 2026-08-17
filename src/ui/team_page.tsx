@@ -695,12 +695,87 @@ export function TeamPage(props: {
   const selected_ref = useRef("");
   const channels_ref = useRef<HubChannel[]>([]);
   const messages_ref = useRef<HubMessage[]>([]);
+  /** Session-only delivery cursors.  They are deliberately derived only
+   * from rows/envelopes this tab has actually received — never from a Hub
+   * channel's advertised last_seq, which would falsely claim a missed row
+   * had already been seen. */
+  const live_cursors_ref = useRef<Record<string, number>>({});
+  const live_socket_ref = useRef<WebSocket | null>(null);
+  /** One subscribe frame per distinct member/cursor snapshot per socket.
+   * Re-sending after a cursor advances is harmless (the Hub deduplicates
+   * channel subscribers) and makes a just-refreshed REST tail the next
+   * reconnect floor. */
+  const live_subscription_ref = useRef("");
   const badge_debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const badge_refresh_inflight = useRef(false);
   const badge_refresh_queued = useRef<HubChannel[] | null>(null);
   selected_ref.current = selected;
   channels_ref.current = channels;
   messages_ref.current = messages;
+
+  /** A REST page is an authoritative local snapshot. Its highest row is a
+   * safe reconnect floor even when the tab deliberately loaded only a tail. */
+  function remember_rest_cursor(channel: string, seq?: number): void {
+    const cursor = Number(seq || 0);
+    if (!channel || !Number.isFinite(cursor) || cursor <= 0) return;
+    live_cursors_ref.current[channel] = Math.max(live_cursors_ref.current[channel] || 0, cursor);
+  }
+
+  /** Advance only a contiguous live stream. If a bounded Hub queue skipped a
+   * row, keep the last contiguous cursor and reconnect: the native Hub then
+   * replays the missing range from that cursor before returning to live. */
+  function remember_live_cursor(channel: string, seq?: number): void {
+    const cursor = Number(seq || 0);
+    if (!channel || !Number.isFinite(cursor) || cursor <= 0) return;
+    const known = live_cursors_ref.current[channel];
+    if (known === undefined) {
+      // Cold starts obtain unread truth from /inbox; this is the first live
+      // floor for a channel whose message window was never opened.
+      live_cursors_ref.current[channel] = cursor;
+      return;
+    }
+    if (cursor <= known) return; // duplicate delivery is permitted by contract
+    if (cursor === known + 1) {
+      live_cursors_ref.current[channel] = cursor;
+      return;
+    }
+    // Do NOT skip the hole. The hub deduplicates already-delivered frames on
+    // one socket, so close deliberately and let the reconnect's `since`
+    // cursor recover the complete missing range on a fresh delivery pump.
+    try {
+      live_socket_ref.current?.close();
+    } catch {
+      // The normal reconnect lane handles a concurrent close.
+    }
+  }
+
+  /**
+   * Agora's native WS contract is a member-channel subscription plus the
+   * rows this tab has already received. Cold-start unread state still comes
+   * from the authoritative /inbox sweep; cursors make reconnects recover
+   * every live gap without inventing a WUI persistence layer or server.
+   */
+  function subscribe_live_socket(): void {
+    const socket = live_socket_ref.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const channel_names = channels_ref.current.filter((channel) => channel.member).map((channel) => channel.name).sort();
+    if (!channel_names.length) return;
+    const since: Record<string, number> = {};
+    for (const channel of channel_names) {
+      const cursor = live_cursors_ref.current[channel];
+      if (typeof cursor === "number" && cursor >= 0) since[channel] = cursor;
+    }
+    const frame = { type: "subscribe", channels: channel_names, since };
+    const signature = JSON.stringify(frame);
+    if (signature === live_subscription_ref.current) return;
+    try {
+      socket.send(signature);
+      live_subscription_ref.current = signature;
+    } catch {
+      // A close can race the readyState check. The reconnect loop below
+      // retries from the same durable-in-tab cursor snapshot.
+    }
+  }
   // Sweep caught-up optimistic ratings AFTER render (render purity —
   // adversary P2-6): once a served row carries the seat's local statement,
   // the optimistic entry must clear so later EXTERNAL changes (e.g. the
@@ -788,6 +863,7 @@ export function TeamPage(props: {
     // every 6th poll — an unchanged list must not re-render the page.
     set_channels((cur) => (same_json(cur, all) ? cur : all));
     channels_ref.current = all;
+    subscribe_live_socket();
     return all;
   }
 
@@ -818,6 +894,11 @@ export function TeamPage(props: {
       const all = chans.filter((channel) => channel.member);
       all.sort((a, b) => (b.last_at || 0) - (a.last_at || 0));
       set_channels(all);
+      channels_ref.current = all;
+      // Initial loads often complete after the browser socket opened. Keep
+      // the first subscribe tied to the authoritative member snapshot, not
+      // a render-timing accident.
+      subscribe_live_socket();
       const open = all.filter((c) => !c.name.startsWith("dm:"));
       const fallback = open[0] || all[0];
       set_selected((current) => {
@@ -899,6 +980,11 @@ export function TeamPage(props: {
               const reloaded = await hub.messages(channel, { since: floor, limit: PAGE_LIMIT });
               if (gen !== chan_gen.current) return;
               reloaded.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+              // This is a new Hub sequence life, not a missed live gap.
+              // Replace rather than max so a later reconnect does not claim
+              // the pre-restore cursor is still valid.
+              live_cursors_ref.current[channel] = reloaded.length ? Number(reloaded[reloaded.length - 1].seq || 0) : 0;
+              subscribe_live_socket();
               set_messages(reloaded); // replace: the old window's seqs are from another life
               set_error("");
               return;
@@ -909,6 +995,8 @@ export function TeamPage(props: {
         }
       }
       list.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      remember_rest_cursor(channel, list[list.length - 1]?.seq);
+      subscribe_live_socket();
       set_messages((cur) => {
         if (opts?.background && cur.length) {
           if (!list.length) return cur; // nothing new — zero re-render
@@ -960,6 +1048,8 @@ export function TeamPage(props: {
               const refreshed = await hub.messages(channel, { since: fresh_floor, limit: PAGE_LIMIT });
               if (gen !== chan_gen.current) return;
               refreshed.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+              remember_rest_cursor(channel, refreshed[refreshed.length - 1]?.seq);
+              subscribe_live_socket();
               set_messages((cur) => (same_json(cur, refreshed) ? cur : refreshed));
             }
           } catch {
@@ -981,7 +1071,8 @@ export function TeamPage(props: {
   }, []);
 
   // Browser WebSocket cannot set Authorization. HubClient therefore uses the
-  // Agora-native /ws?token=KEY lane from the in-memory existing seat key;
+  // Agora-native /ws?token=KEY lane from the in-memory existing seat key.
+  // Every connection sends the documented member-channel subscribe frame;
   // polling remains the complete fallback if the socket is unavailable.
   useEffect(() => {
     const socket_url = hub.ws_url();
@@ -1007,8 +1098,13 @@ export function TeamPage(props: {
         return;
       }
       ws.onopen = () => {
+        live_socket_ref.current = ws;
+        // A fresh WebSocket has no server-side subscription state. Its first
+        // frame must restore every member channel from this tab's cursors.
+        live_subscription_ref.current = "";
         set_live(true);
         open_at = Date.now();
+        subscribe_live_socket();
         // Mount-during-outage heal (adversarial F4, dm 99): if the initial
         // channel/meta load failed while the hub was down, the socket
         // connecting IS the "hub is back" signal — reload instead of
@@ -1019,8 +1115,13 @@ export function TeamPage(props: {
       ws.onmessage = (ev) => {
         try {
           const frame = JSON.parse(String(ev.data || "{}"));
+          // A successful subscribe is a protocol control receipt. There is
+          // no WUI collaboration state to fabricate from it; backlog and
+          // live rows arrive as the authoritative envelope frames below.
+          if (frame?.type === "subscribed") return;
           if (frame?.type !== "envelope") return;
           const ch = String(frame.envelope?.channel || "");
+          remember_live_cursor(ch, Number(frame.envelope?.seq || 0));
           if (ch && ch === selected_ref.current) void refresh_messages(ch, { background: true });
           // A channel the rail doesn't know yet (an agent just opened a DM
           // to the operator, or a new channel was created) must JOIN the
@@ -1036,6 +1137,10 @@ export function TeamPage(props: {
         }
       };
       ws.onclose = () => {
+        if (live_socket_ref.current === ws) {
+          live_socket_ref.current = null;
+          live_subscription_ref.current = "";
+        }
         set_live(false);
         if (!closed) {
           // Backoff resets only after a STABLE open (adversary F9): a hub
@@ -1059,6 +1164,10 @@ export function TeamPage(props: {
     return () => {
       closed = true;
       if (badge_debounce.current) clearTimeout(badge_debounce.current);
+      if (live_socket_ref.current === ws) {
+        live_socket_ref.current = null;
+        live_subscription_ref.current = "";
+      }
       try {
         ws?.close();
       } catch {
@@ -1548,13 +1657,14 @@ export function TeamPage(props: {
     set_decline_arm("");
     try {
       const asks = Array.isArray(m.pending_asks) ? m.pending_asks.filter(Boolean) : [];
-      await hub.post_message(m.channel, {
+      const posted = await hub.post_message(m.channel, {
         body: `Declined on the record by ${meta?.seat || "operator"} — closing without a substantive answer.`,
         status: "reply",
         reply_to: m.id,
         to: m.sender ? [m.sender] : undefined,
         ...(asks.length ? { answers: asks } : {}),
       });
+      remember_rest_cursor(m.channel, Number(posted?.seq || 0));
       // The hub recomputes discharge on the next inbox poll; drop the pill
       // immediately for feedback (the poll confirms).
       set_debt_map((cur) => {
@@ -2317,13 +2427,14 @@ export function TeamPage(props: {
     set_error("");
     try {
       const resolve_to = dm_peer_of(selected, seat);
-      await hub.post_message(selected, {
+      const posted = await hub.post_message(selected, {
         body: "Resolved.",
         status: "resolved",
         to: resolve_to ? [resolve_to] : undefined,
         reply_to: m.id,
         data,
       });
+      remember_rest_cursor(selected, Number(posted?.seq || 0));
       set_resolve_nudge("");
       set_resolve_hub_data("");
       set_notice(`Marked #${m.seq} resolved.`);
@@ -2826,20 +2937,25 @@ export function TeamPage(props: {
           data,
           attachments: att.length ? att : undefined,
         };
+        let posted: any;
         try {
-          await hub.post_message(selected, payload);
+          posted = await hub.post_message(selected, payload);
         } catch (e: any) {
           // Peer left the dm channel: addressing them 400s ("cannot
           // address non-members"). Deliver unaddressed rather than
           // breaking sending entirely — with a visible warning, since
           // the to-me wake is lost (adversarial find 3).
           if (dm_to && /address non-members/i.test(String(e?.message || e))) {
-            await hub.post_message(selected, { ...payload, to: undefined });
+            posted = await hub.post_message(selected, { ...payload, to: undefined });
             set_error(`#FALLBACK '${dm_to}' is no longer a member of this dm — message delivered unaddressed (their listener will not get a to-me wake).`);
           } else {
             throw e;
           }
         }
+        // The Hub intentionally does not echo a seat's own WS frames. Fold
+        // the authoritative REST post receipt into the reconnect cursor so
+        // a peer's next envelope cannot look like a false dropped-frame gap.
+        remember_rest_cursor(selected, Number(posted?.seq || 0));
         set_notice(in_dm ? "Sent." : "Posted.");
         await refresh_messages(selected, { background: true });
         // Mention-to-invite rides AFTER the landed post (operator dm 79) —

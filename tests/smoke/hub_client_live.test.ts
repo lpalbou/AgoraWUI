@@ -11,6 +11,41 @@ const key = process.env.AGORA_WUI_E2E_KEY;
 const live = url && key ? it : it.skip;
 
 describe("direct Hub client end-to-end", () => {
+  live("opens the documented WebSocket subscribe lane with the existing seat key", async () => {
+    const hub = new HubClient({ base_url: url!, bearer_token: key! });
+    const channel = (await hub.channels()).find((row) => row.member);
+    expect(channel).toBeTruthy();
+    const socket_url = hub.ws_url();
+    expect(socket_url).toBeTruthy();
+
+    const socket = new WebSocket(socket_url!);
+    const subscribed = await new Promise<any>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        socket.close();
+        reject(new Error("timed out waiting for Agora Hub WS subscribe receipt"));
+      }, 5000);
+      socket.onopen = () => {
+        // `last_seq` is an authoritative current snapshot for this read-only
+        // transport probe; a real WUI session instead sends only its own
+        // received cursors (covered by the TeamPage contract test).
+        socket.send(JSON.stringify({ type: "subscribe", channels: [channel!.name], since: { [channel!.name]: channel!.last_seq } }));
+      };
+      socket.onmessage = (event) => {
+        const frame = JSON.parse(String(event.data));
+        if (frame?.type !== "subscribed") return;
+        clearTimeout(timeout);
+        socket.close();
+        resolve(frame);
+      };
+      socket.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error("Agora Hub rejected the direct WebSocket transport"));
+      };
+    });
+
+    expect(subscribed.channels).toEqual([channel!.name]);
+  });
+
   live("authenticates, creates a channel, posts, and reads authoritative rows", async () => {
     const hub = new HubClient({ base_url: url!, bearer_token: key! });
     const me = await hub.meta();

@@ -5,9 +5,10 @@
 // filters), and the AI lanes' read-only contract (/assistant routes to
 // the analyst and NEVER posts to the room).
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { HubClient } from "../../src/lib/hub_client";
 import { TeamPage } from "../../src/ui/team_page";
 
 const original_create_object_url = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
@@ -147,6 +148,95 @@ describe("member-scoped channel selection", () => {
       expect(fetch_mock.mock.calls.some(([url]: any[]) => String(url).includes("/channels/agora-wui-work/messages"))).toBe(true);
       expect(fetch_mock.mock.calls.some(([url]: any[]) => String(url).includes("/channels/optimize-code/messages"))).toBe(false);
     });
+  });
+});
+
+describe("native WebSocket subscribe/catch-up", () => {
+  it("subscribes member channels, carries cursors across membership changes, and reconnects from a gap", async () => {
+    const channels = [{ name: "commons", private: false, member: true, member_count: 14, last_seq: 10, last_at: 10 }];
+    stub_hub({
+      channels,
+      messages: [{ id: "m10", channel: "commons", seq: 10, sender: "peer", status: "fyi", body: "known cursor" }],
+    });
+
+    class FakeSocket {
+      static readonly OPEN = 1;
+      static instances: FakeSocket[] = [];
+      readyState = 0;
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      sent: string[] = [];
+
+      constructor(readonly url: string) {
+        FakeSocket.instances.push(this);
+      }
+
+      send(data: string): void {
+        this.sent.push(data);
+      }
+
+      open(): void {
+        this.readyState = FakeSocket.OPEN;
+        this.onopen?.(new Event("open"));
+      }
+
+      receive(frame: unknown): void {
+        this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+      }
+
+      close(): void {
+        this.readyState = 3;
+        this.onclose?.({} as CloseEvent);
+      }
+
+      subscribe_frames(): Array<{ type?: string; channels?: string[]; since?: Record<string, number> }> {
+        return this.sent.map((frame) => JSON.parse(frame)).filter((frame) => frame.type === "subscribe");
+      }
+    }
+
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const hub = new HubClient({
+      base_url: "http://127.0.0.1:8765",
+      bearer_token: "existing-seat-key",
+    });
+    render(<TeamPage advisor={make_advisor()} hub={hub} />);
+
+    await waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+    const socket = FakeSocket.instances[0];
+    await act(async () => {
+      socket.open();
+    });
+    await waitFor(() => {
+      expect(socket.subscribe_frames().some((frame) => frame.channels?.join(",") === "commons")).toBe(true);
+    });
+
+    channels.push({ name: "dm:laurent--peer", private: true, member: true, member_count: 2, last_seq: 42, last_at: 11 });
+    await act(async () => {
+      socket.receive({ type: "envelope", envelope: { channel: "dm:laurent--peer", seq: 42 } });
+    });
+    await waitFor(() => {
+      const membership_update = socket.subscribe_frames().find((frame) => frame.channels?.includes("dm:laurent--peer"));
+      expect(membership_update?.channels).toEqual(["commons", "dm:laurent--peer"]);
+      expect(membership_update?.since?.["dm:laurent--peer"]).toBe(42);
+    });
+
+    vi.useFakeTimers();
+    await act(async () => {
+      // Seq 11 was dropped. Do not advance to 12; reconnect from the last
+      // contiguous REST/live cursor so the Hub replays the missing range.
+      socket.receive({ type: "envelope", envelope: { channel: "commons", seq: 12 } });
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(FakeSocket.instances).toHaveLength(2);
+    const reconnected = FakeSocket.instances[1];
+    await act(async () => {
+      reconnected.open();
+    });
+    const reconnect_frame = reconnected.subscribe_frames().find((frame) => frame.channels?.includes("dm:laurent--peer"));
+    expect(reconnect_frame?.since?.commons).toBe(10);
+    expect(reconnect_frame?.since?.["dm:laurent--peer"]).toBe(42);
   });
 });
 

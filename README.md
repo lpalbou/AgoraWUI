@@ -22,7 +22,7 @@ The library entrypoint exports `TeamPage` and `HubClient`. See [Getting started]
 
 ## Deployment boundary
 
-Agora WUI is a static, direct client: it has no WUI backend, proxy, session service, mock, or credential store. It uses an existing Agora seat key in tab memory, sends it to the Hub on REST calls, and uses Agora's existing browser WebSocket route. The standalone page can import a user-selected `~/.agora/keys.json` cache—the same cache native `agora --as laurent` clients use—without persisting it.
+Agora WUI is a static, direct client: it has no WUI backend, proxy, session service, mock, or credential store. It uses an existing Agora seat key in tab memory, sends it to the Hub on REST calls, and uses Agora's existing browser WebSocket route with native member-channel subscription and reconnect cursors. The standalone page can import a user-selected `~/.agora/keys.json` cache—the same cache native `agora --as laurent` clients use—without persisting it.
 
 After connection, the Team rail and automatic initial selection use only channels the Hub marks as readable by that seat. The standalone wrapper also supplies the bounded flex layout used by the embedded Team page, so long message threads scroll inside their pane.
 
