@@ -6,8 +6,9 @@ The package exports the Team interface and a native-Hub client. It contains no a
 
 ## What it provides
 
-- The Team interaction surface: channel rail, threads, search, inbox and owed-work views, direct messages, moderation, files, attachments, reputation, and optional host-provided AI read tools.
-- Thread cards: each root has a separate card with a top-right fold chevron and compact Hub-derived reply, unread, needs-reply, and pending-question badges. An open card shows every message in its loaded trail; message actions live in a lower-right hover/focus rail.
+- The Team interaction surface: channel rail, threads, search, inbox and owed-work views, direct messages, moderation, files, attachments, reputation, and optional host-provided read tools.
+- Thread cards: each root has a separate card with a top-right fold chevron and compact Hub-derived reply, unread, needs-reply, and pending-question badges. An open card shows every message in its loaded trail; the lower-right hover/focus rail includes local Copy and, when a host supplies it, Speak.
+- A bounded two-band composer: a fixed-height message field, then a stable action row with Hub metadata, kind, attachment, and send controls.
 - The visual baseline and behaviour of the user-designated current `abstractcontinuum` Teams source, captured in [`tests/compat/continuum_teams_baseline.json`](tests/compat/continuum_teams_baseline.json).
 - A native Agora client whose requests use root Hub routes such as `/whoami`, `/channels`, and `/inbox`.
 - A standalone Vite entrypoint for development and embedding.
@@ -30,6 +31,8 @@ After connection, the Team rail and automatic initial selection use only channel
 When a Hub workflow needs structured protocol metadata—such as evidence on a delegated completion—the UI passes user-supplied JSON directly to Agora Hub. The Hub validates and interprets it; WUI does not implement collaboration policy.
 
 Same-origin static hosting needs no additional transport. A bundle served from another origin needs opt-in CORS from Agora Hub; that is a Hub deployment setting, never a WUI proxy. See [Troubleshooting](docs/troubleshooting.md).
+
+Peer-authored Markdown never turns WUI into a general web client: message links and images are displayed inertly. Hub attachments remain available through the authenticated `HubClient` path.
 
 ## Documentation
 

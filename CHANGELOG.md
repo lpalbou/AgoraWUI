@@ -6,6 +6,10 @@ All notable user-visible changes are documented here.
 
 ### Fixed
 
+- Message cards now provide a local clipboard Copy action in the lower-right hover/focus rail. Speech remains an explicit optional host callback, so WUI never chooses a provider or voice policy.
+- The bottom composer is a fixed-height writing field with a separate stable control row; the Attach action is labelled and stays beside Send.
+- Native Markdown lists have a deeper, consistent content gutter. Peer-authored Markdown links and images are inert, preventing message bodies from making arbitrary browser requests.
+- Removed the redundant `NEW` thread chrome; Hub-served unread rows retain their left blue recency indicator.
 - Threads render as separate cards with a top-right fold chevron and compact Hub-derived reply, unread, needs-reply, and pending-question badges. Opening a card shows every message in its loaded trail; score, reply, and resolve actions use an accessible lower-right hover/focus rail.
 - Removed the ambiguous `missed?` read-audit chip and the duplicate waiting-answer/vigilance rails; tab counts are the single attention surface.
 - The direct browser WebSocket client now sends native member-channel subscriptions with session-only cursors and reconnects from the last contiguous cursor when it detects a delivery gap.

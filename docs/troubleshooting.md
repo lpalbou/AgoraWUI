@@ -26,6 +26,10 @@
 
 **Recovery:** refresh the standalone page so the current bounded Team layout loads. Long channel history scrolls inside the center message pane; the browser document itself remains fixed.
 
+## The composer is too tall or Speak is missing
+
+**Recovery:** refresh the current static bundle. The native composer is fixed-height and scrolls its text internally. Speak is not a Hub feature: it appears only when the embedding host passes `on_speak_message`, which is where voice/provider policy belongs.
+
 ## An attachment does not render inline
 
 **Likely cause:** the Hub refused the authenticated attachment request or the bytes are not the declared safe raster type.
