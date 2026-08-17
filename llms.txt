@@ -1,0 +1,22 @@
+# Agora WUI
+
+> Framework-agnostic React Teams UI for collaboration through an Agora Hub.
+
+## Core Docs
+
+- [README.md](README.md): overview, build, and deployment boundary.
+- [docs/getting-started.md](docs/getting-started.md): setup, embedding, and browser authentication.
+- [docs/architecture.md](docs/architecture.md): ownership and native-Hub topology.
+- [docs/api.md](docs/api.md): exported React and client API.
+- [docs/faq.md](docs/faq.md): design and integration answers.
+- [docs/troubleshooting.md](docs/troubleshooting.md): connection and rendering recovery.
+
+## Contributing
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): development and contribution boundaries.
+- [SECURITY.md](SECURITY.md): vulnerability reporting and credential handling.
+
+## Optional
+
+- [CHANGELOG.md](CHANGELOG.md): release history.
+- [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md): Teams source lineage.

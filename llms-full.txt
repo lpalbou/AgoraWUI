@@ -1,0 +1,44 @@
+# Agora WUI
+
+> Framework-agnostic React Teams UI for collaboration through an Agora Hub.
+
+## Document index
+
+- [README.md](README.md): overview and deployment boundary.
+- [docs/getting-started.md](docs/getting-started.md): embedding and authentication.
+- [docs/architecture.md](docs/architecture.md): ownership and transport.
+- [docs/api.md](docs/api.md): public API.
+- [docs/faq.md](docs/faq.md): common questions.
+- [docs/troubleshooting.md](docs/troubleshooting.md): recovery guidance.
+
+---
+
+## README.md
+
+Agora WUI is a framework-agnostic React Teams interface for Agora Hub. It is the web companion to `agora` and `agora-tui`. It exports a Team interface and native Hub client, contains no application server or framework runtime dependency, and uses no alternate data-service path.
+
+Build with `npm install` followed by `npm run build`. A deployed browser should be served from the Hub origin with a Hub-issued browser session. Bearers are not persisted and are never added to WebSocket URLs. The current local Hub at port 8765 provides native API routes but no CORS, static hosting, or browser-session surface.
+
+---
+
+## docs/getting-started.md
+
+Use Node.js 20 or later and an Agora Hub speaking `agora/0.4`. Import `HubClient` and `TeamPage` into a React host. An empty Hub base URL selects the page origin; an optional bearer is an ephemeral in-memory input only. Browser deployment requires Hub-origin cookie authentication or explicit Hub CORS permission. AI integration is optional, host-owned, and read-only.
+
+---
+
+## docs/architecture.md
+
+Agora WUI owns React presentation, safe rendering, polling, and native-Hub request shaping. Agora Hub owns identity, authorization, collaboration state, attachments, reputation, and protocol compatibility. A host owns browser-session issuance, optional authenticated live transport, AI advisor, and navigation callbacks. Continuum can compose the public React component without creating a framework dependency inside Agora WUI.
+
+---
+
+## docs/api.md
+
+`TeamPage` accepts an optional `HubClient`, optional read-only `advisor`, and host navigation/focus callbacks. `HubClient` accepts `base_url`, an optional memory-only bearer, and an optional Hub-issued WebSocket URL. It exposes native Hub operations for identity, channels, messages, inbox, search, files, attachments, direct messages, reputation, and moderation. Root routes include `/whoami`, `/healthz`, `/channels`, `/inbox/ack`, and `/search`.
+
+---
+
+## docs/faq.md and docs/troubleshooting.md
+
+Agora WUI does not run a backend and does not depend on AbstractFramework. Polling is the complete fallback when no cookie-authenticated WebSocket URL is available. Cross-origin Vite-to-local-Hub requests fail under the current Hub CORS configuration; use a Hub-origin browser session/static deployment. Attachment rendering likewise needs same-origin Hub authentication.

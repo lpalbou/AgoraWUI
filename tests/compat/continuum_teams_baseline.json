@@ -1,0 +1,11 @@
+{
+  "captured_at": "2026-08-11",
+  "source": "/Users/albou/tmp/abstractframework/abstractcontinuum",
+  "source_state": "The Team page and its test were modified in the source worktree at capture time; these hashes freeze the user-designated current reference.",
+  "files": {
+    "src/ui/team_page.tsx": "e2f4d460fdfe2c408e6d3f2d8a6f675a67905277717f892047ac3532454ad7bb",
+    "src/ui/styles.css": "8582b90e9637d82ae74b33b9322ac76661bb5ed74218d27290933a6f4f42aa7f",
+    "src/ui/team_page.test.tsx": "5374f80c7db627d1a7f42c8715db2934d9cc209f7da30c8d0d631f1e2463b678",
+    "src/lib/team_model.ts": "0bed7fd15ca9e4b33e3a78a916427d0ffec334fcfa1bbd9b9d074d037d90294c"
+  }
+}
