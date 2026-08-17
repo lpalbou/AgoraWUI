@@ -15,14 +15,11 @@ export function AfChip({
 
 const glyph: Record<string, string> = {
   paperclip: "⌇",
-  thumbsUp: "△",
-  thumbsUpFilled: "▲",
-  thumbsDown: "▽",
-  thumbsDownFilled: "▼",
   pause: "Ⅱ",
   refresh: "↻",
   speaker: "◖",
   copy: "⧉",
+  check: "✓",
   plus: "+",
   x: "×",
   trash: "⌫",
@@ -31,6 +28,23 @@ const glyph: Record<string, string> = {
 /** Minimal local icon surface used by the extracted Team view.
  * It deliberately has no AbstractFramework dependency. */
 export function Icon({ name, size = 14, className, title }: { name: string; size?: number; className?: string; title?: string }): React.ReactElement {
+  const thumb = name === "thumbsUp" || name === "thumbsUpFilled" || name === "thumbsDown" || name === "thumbsDownFilled";
+  if (thumb) {
+    const filled = name.endsWith("Filled");
+    const down = name.startsWith("thumbsDown");
+    /* Inline paths keep vote icons familiar, tintable, and independent of an
+       icon package or a remote asset. */
+    const path = filled
+      ? "M1 21h4V9H1v12zM23 10c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"
+      : "M21 8h-6.31l.95-4.57c.01-.11.02-.22.02-.34 0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2C23 9.9 22.1 8 21 8zm0 4-3 7H9V9l4.34-4.34L12.03 11H21v1zM1 9h4v12H1z";
+    return (
+      <span className={className} title={title} aria-hidden="true" style={{ display: "inline-flex", lineHeight: 1 }}>
+        <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" style={down ? { transform: "rotate(180deg)" } : undefined}>
+          <path d={path} />
+        </svg>
+      </span>
+    );
+  }
   return (
     <span className={className} title={title} aria-hidden="true" style={{ display: "inline-block", fontSize: size, lineHeight: 1 }}>
       {glyph[name] || "•"}

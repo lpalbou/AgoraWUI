@@ -295,7 +295,7 @@ describe("hub-wide search (agora-0132, hub ≥ 0.12.44)", () => {
     expect(mark).toBeTruthy();
     // No body is served — the row shows the snippet, the sender, the tally.
     await screen.findByText("agora");
-    await screen.findByText((_, el) => Boolean(el?.className?.includes?.("team_search_tally") && el.textContent === "▲2 ▽0"));
+    await screen.findByText((_, el) => Boolean(el?.className?.includes?.("team_search_tally") && el.textContent === "2 0" && el.querySelectorAll("svg").length === 2));
   });
 
   it("renders the LOUD relaxation banner when the hub loosened the query", async () => {
@@ -424,7 +424,7 @@ describe("message ratings — ONE reputation system (operator dm 150)", () => {
     render_page();
     // Served decoration renders as the always-visible tally (one span,
     // multiple text nodes — match on the composed content).
-    await screen.findByText((_, el) => Boolean(el && el.className?.includes?.("team_reaction_tally") && el.textContent === "▲2 ▼1"));
+    await screen.findByText((_, el) => Boolean(el && el.className?.includes?.("team_reaction_tally") && el.textContent === "21" && el.querySelectorAll("svg").length === 2));
     // Click the +1 thumb on the (foreign) row's hover rail.
     const up_btn = await screen.findByTitle("+1 this message");
     fireEvent.click(up_btn);
@@ -445,7 +445,7 @@ describe("message ratings — ONE reputation system (operator dm 150)", () => {
     render_page();
     await screen.findByText("undecorated row");
     expect(screen.queryByTitle("+1 this message")).toBeNull();
-    expect(screen.queryByText(/▲/)).toBeNull();
+    expect(document.querySelector(".team_reaction_tally")).toBeNull();
   });
 
   it("withdraw: clicking my own standing direction DELETEs the rating", async () => {
@@ -1023,6 +1023,9 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("Speech title\n\nSpeech body"));
+    expect(screen.getByRole("button", { name: "Copied message" })).toBeTruthy();
+    expect(screen.queryByText("Copied message #1.")).toBeNull();
+    expect(document.querySelector(".team_statusstrip")?.textContent ?? "").not.toContain("Copied message");
 
     fireEvent.click(screen.getByRole("button", { name: "Speak message" }));
     await waitFor(() => expect(speak).toHaveBeenCalledTimes(1));

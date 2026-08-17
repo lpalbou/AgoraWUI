@@ -13,6 +13,6 @@ describe("standalone Team layout", () => {
   it("keeps the composer fixed and gives native Markdown lists a clear gutter", () => {
     expect(styles).toMatch(/\.team_compose_text\s*\{[^}]*height:\s*92px;[^}]*min-height:\s*92px;[^}]*max-height:\s*92px;/s);
     expect(styles).toMatch(/\.team_compose_actions\s*\{[^}]*display:\s*flex;/s);
-    expect(styles).toMatch(/\.md_doc ul,\s*\.md_doc ol\s*\{[^}]*padding-inline-start:\s*38px;/s);
+    expect(styles).toMatch(/\.md_doc ul,\s*\.md_doc ol\s*\{[^}]*padding-inline-start:\s*16px;/s);
   });
 });

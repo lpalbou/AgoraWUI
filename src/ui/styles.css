@@ -1982,6 +1982,16 @@ button.primary:hover:not(:disabled) {
   color: var(--text-tertiary);
 }
 
+/* Copy feedback stays on its own control: it never enters the top status
+   strip and therefore cannot move the conversation while the user reads. */
+.team_row_rail .team_copy.team_copy_copied {
+  color: var(--success, #22c55e);
+}
+
+.team_row_rail .team_copy.team_copy_failed {
+  color: var(--danger, #ef4444);
+}
+
 /* PRESSED state must be unmissable (operator dm 20): solid-filled glyph on
    a tinted pill with a matching ring — not a subtle stroke recolor. The
    SOLID comes from the kit's thumbsUpFilled/thumbsDownFilled glyphs
@@ -2220,18 +2230,13 @@ button.primary:hover:not(:disabled) {
   margin: 4px 0;
 }
 
-/* Multi-line bullets breathe; nested lists keep the kit's tight stacking.
-   INDENTATION (operator dm 123 "create the right indentations"): the
-   kit's margin-only step (18/22px margin, zero padding) left item text
-   nearly flush with paragraph text and the markers hanging out into the
-   prose gutter. GitHub-style instead: the list CONTENT steps in from the
-   prose margin and markers render inside the step; each nesting level
-   steps again by the same padding. */
+/* Multi-line bullets breathe. Keep the marker beside the paragraph edge and
+   give the item text one ordinary step — not a deep second gutter. */
 .md_doc ul,
 .md_doc ol {
   margin: 6px 0;
   margin-inline-start: 0;
-  padding-inline-start: 38px;
+  padding-inline-start: 16px;
 }
 
 .md_doc ul ul,
@@ -4093,6 +4098,9 @@ button.primary:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
 }
 .team_reaction_tally {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   font-size: max(9px, calc(var(--font-size-xs) * 0.85));
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -4896,6 +4904,9 @@ a.team_attach_dl:hover {
   font-weight: 700;
 }
 .team_search_tally {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   color: var(--text-tertiary);
 }
 .team_search_time {

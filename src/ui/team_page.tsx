@@ -497,7 +497,7 @@ export function TeamPage(props: {
   const [posting, set_posting] = useState(false);
   const [ack_busy, set_ack_busy] = useState(false);
   const [notice, set_notice] = useState("");
-  const [copied_message_id, set_copied_message_id] = useState("");
+  const [copy_feedback, set_copy_feedback] = useState<{ id: string; status: "copied" | "failed" } | null>(null);
   const [speaking_message_id, set_speaking_message_id] = useState("");
   const speak_abort_ref = useRef<AbortController | null>(null);
   useEffect(() => () => {
@@ -1455,22 +1455,19 @@ export function TeamPage(props: {
 
   async function copy_message(m: HubMessage): Promise<void> {
     const text = message_copy_text(m);
+    const show_copy_feedback = (status: "copied" | "failed") => {
+      set_copy_feedback({ id: m.id, status });
+      setTimeout(() => set_copy_feedback((current) => current?.id === m.id && current.status === status ? null : current), 2200);
+    };
     if (!navigator.clipboard?.writeText) {
-      set_notice("Copy is unavailable in this browser context.");
-      setTimeout(() => set_notice(""), 3000);
+      show_copy_feedback("failed");
       return;
     }
     try {
       await navigator.clipboard.writeText(text);
-      set_copied_message_id(m.id);
-      set_notice(`Copied message #${m.seq}.`);
-      setTimeout(() => {
-        set_copied_message_id((current) => (current === m.id ? "" : current));
-        set_notice("");
-      }, 2200);
+      show_copy_feedback("copied");
     } catch {
-      set_notice("Copy was refused by this browser.");
-      setTimeout(() => set_notice(""), 3000);
+      show_copy_feedback("failed");
     }
   }
 
@@ -3252,8 +3249,8 @@ export function TeamPage(props: {
             </span>
           ) : null}
           {rt && (rt.up || rt.down) ? (
-            <span className="team_search_tally mono" title="Standing ±1 ratings on this message (read-only here — vote from the thread)">
-              ▲{rt.up} ▽{rt.down}
+            <span className="team_search_tally" title="Standing ±1 ratings on this message (read-only here — vote from the thread)">
+              <Icon name="thumbsUp" size={12} />{rt.up} <Icon name="thumbsDown" size={12} />{rt.down}
             </span>
           ) : null}
           {hit.created_at ? <span className="muted team_search_time">{abs_time(hit.created_at)}</span> : null}
@@ -3947,10 +3944,9 @@ export function TeamPage(props: {
               const t = msg_tally(m);
               if (!t || (!t.up && !t.down)) return null;
               return (
-                <span className={`team_reaction_tally mono ${t.mine > 0 ? "pos" : t.mine < 0 ? "neg" : ""}`} title="±1 ratings feed the sender's reputation (one system). Green/red tint = YOUR standing vote on this message; counts refresh with the poll.">
-                  {t.up ? `▲${t.up}` : ""}
-                  {t.up && t.down ? " " : ""}
-                  {t.down ? `▼${t.down}` : ""}
+                <span className={`team_reaction_tally ${t.mine > 0 ? "pos" : t.mine < 0 ? "neg" : ""}`} title="±1 ratings feed the sender's reputation (one system). Green/red tint = YOUR standing vote on this message; counts refresh with the poll.">
+                  {t.up ? <><Icon name="thumbsUp" size={12} />{t.up}</> : null}
+                  {t.down ? <><Icon name="thumbsDown" size={12} />{t.down}</> : null}
                 </span>
               );
             })()}
@@ -4069,15 +4065,15 @@ export function TeamPage(props: {
             </button>
           ) : null}
           <button
-            className="btn btn_icon"
-            aria-label={copied_message_id === m.id ? "Copied message" : "Copy message"}
-            title={copied_message_id === m.id ? "Copied message" : "Copy message to the clipboard"}
+            className={`btn btn_icon team_copy ${copy_feedback?.id === m.id ? `team_copy_${copy_feedback.status}` : ""}`}
+            aria-label={copy_feedback?.id === m.id ? (copy_feedback.status === "copied" ? "Copied message" : "Copy unavailable") : "Copy message"}
+            title={copy_feedback?.id === m.id ? (copy_feedback.status === "copied" ? "Copied message" : "Copy unavailable") : "Copy message to the clipboard"}
             onClick={(e) => {
               e.stopPropagation();
               void copy_message(m);
             }}
           >
-            <Icon name="copy" size={15} />
+            <Icon name={copy_feedback?.id === m.id ? (copy_feedback.status === "copied" ? "check" : "x") : "copy"} size={15} />
           </button>
           {can_post ? (
             <>
