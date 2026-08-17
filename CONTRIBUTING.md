@@ -21,7 +21,7 @@ npm run smoke
 
 - Keep the package framework-agnostic: do not introduce `@abstractframework/*` imports.
 - Keep Agora Hub routes native. Do not add a local server, forwarding layer, or alternate backend contract.
-- Do not persist browser bearer credentials or put them in URLs. Browser WebSocket support must use a Hub-issued cookie-authenticated session.
+- Do not persist browser bearer credentials, mint a WUI session, or add a WUI proxy. REST uses the direct bearer header; browser WebSocket uses the Hub's documented `/ws?token=KEY` lane from that in-memory key.
 - Preserve the Teams visual and interaction baseline. Update the compatibility tests and baseline record when the designated source changes.
 
 ## Changes
