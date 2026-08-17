@@ -22,6 +22,7 @@ const glyph: Record<string, string> = {
   pause: "Ⅱ",
   refresh: "↻",
   speaker: "◖",
+  copy: "⧉",
   plus: "+",
   x: "×",
   trash: "⌫",
@@ -37,9 +38,22 @@ export function Icon({ name, size = 14, className, title }: { name: string; size
   );
 }
 
-/** Sanitised markdown renderer. react-markdown never enables raw HTML. */
+/** Sanitised Markdown. Peer-authored links and images are inert: WUI does
+ * not make browser requests outside the direct Hub session. */
 export function Markdown({ className, text }: { className?: string; text: string }): React.ReactElement {
-  return <div className={`pc-md ${className || ""}`}><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div>;
+  return (
+    <div className={`pc-md ${className || ""}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ children }) => <span className="md_external_disabled" title="Links in Hub messages are displayed but never opened by WUI">{children}</span>,
+          img: ({ alt }) => <span className="md_media_blocked" aria-label={alt || "Blocked external image"}>[{alt || "image"}]</span>,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export function ChatComposer(props: {

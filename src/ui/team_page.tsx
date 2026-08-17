@@ -317,11 +317,18 @@ function day_of(ts?: number): string {
 export type TeamAiTurn = { role: "user" | "assistant"; content: string };
 /** Optional host-provided read-only analyst lane. */
 export type TeamAdvisorFn = (question: string, history: TeamAiTurn[]) => Promise<string>;
+/** The neutral message payload supplied to an optional host speech adapter. */
+export type TeamSpeakMessage = Pick<HubMessage, "id" | "channel" | "seq" | "sender" | "title" | "body">;
+/** Optional host-owned speech capability. WUI supplies no backend or voice policy. */
+export type TeamSpeakFn = (message: TeamSpeakMessage, signal: AbortSignal) => void | Promise<void>;
 
 export function TeamPage(props: {
   /** Supplied by a host that owns an AI capability; WUI itself never calls a framework runtime. */
   /** When set, powers thread summarize + channel assistant (read-only; never posts). */
   advisor?: TeamAdvisorFn;
+  /** Optional host capability for reading a message aloud. The host owns
+   *  provider choice and default/per-agent voice policy. */
+  on_speak_message?: TeamSpeakFn;
   /** The native Hub client. A host owns the ephemeral authentication session. */
   hub?: HubClient;
   /** Work-id chip navigation (S3: message mentions of <package>-<NNNN>
@@ -464,18 +471,6 @@ export function TeamPage(props: {
   const attach_input_ref = useRef<HTMLInputElement | null>(null);
   /** Drag-over highlight for the file drop zone (operator dm 41). */
   const [drag_over, set_drag_over] = useState(false);
-  const compose_ta_ref = useRef<HTMLTextAreaElement | null>(null);
-
-  // Composer auto-grow as an EFFECT on the value, not an onChange side
-  // effect (operator dm 50): sending a long message cleared the text but
-  // the explicit height stuck, leaving a tall empty box. Any programmatic
-  // change (send-reset, draft restore on channel switch) now resizes too.
-  useEffect(() => {
-    const el = compose_ta_ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight + 2, 160)}px`;
-  }, [compose_text, selected]);
   /** Composer kind (operator c2240: one dropdown — fyi / ask / dm; +
    *  "group" per operator dm 71). "ask" posts status=open (expects
    *  reply); "dm" sends a direct message; "group" creates a focused
@@ -502,6 +497,18 @@ export function TeamPage(props: {
   const [posting, set_posting] = useState(false);
   const [ack_busy, set_ack_busy] = useState(false);
   const [notice, set_notice] = useState("");
+  const [copied_message_id, set_copied_message_id] = useState("");
+  const [speaking_message_id, set_speaking_message_id] = useState("");
+  const speak_abort_ref = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    speak_abort_ref.current?.abort();
+    speak_abort_ref.current = null;
+  }, []);
+  useEffect(() => {
+    speak_abort_ref.current?.abort();
+    speak_abort_ref.current = null;
+    set_speaking_message_id("");
+  }, [selected]);
 
   // Verify-transcript state, per selected channel (cleared on switch).
   const [verify_state, set_verify_state] = useState<null | "running" | LedgerVerdict | { error: string }>(null);
@@ -1438,6 +1445,64 @@ export function TeamPage(props: {
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
     fire_read(m);
+  }
+
+  function message_copy_text(m: HubMessage): string {
+    const title = String(m.title || "").trim();
+    const body = String(m.body || "").trim();
+    return title && body && title !== body ? `${title}\n\n${body}` : title || body;
+  }
+
+  async function copy_message(m: HubMessage): Promise<void> {
+    const text = message_copy_text(m);
+    if (!navigator.clipboard?.writeText) {
+      set_notice("Copy is unavailable in this browser context.");
+      setTimeout(() => set_notice(""), 3000);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      set_copied_message_id(m.id);
+      set_notice(`Copied message #${m.seq}.`);
+      setTimeout(() => {
+        set_copied_message_id((current) => (current === m.id ? "" : current));
+        set_notice("");
+      }, 2200);
+    } catch {
+      set_notice("Copy was refused by this browser.");
+      setTimeout(() => set_notice(""), 3000);
+    }
+  }
+
+  function speak_message(m: HubMessage): void {
+    const speak = props.on_speak_message;
+    if (!speak) return;
+    speak_abort_ref.current?.abort();
+    const controller = new AbortController();
+    speak_abort_ref.current = controller;
+    set_speaking_message_id(m.id);
+    const message: TeamSpeakMessage = {
+      id: m.id,
+      channel: m.channel,
+      seq: m.seq,
+      sender: m.sender,
+      title: m.title,
+      body: m.body,
+    };
+    void Promise.resolve()
+      .then(() => speak(message, controller.signal))
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          set_notice(`Could not speak message #${m.seq}.`);
+          setTimeout(() => set_notice(""), 3000);
+        }
+      })
+      .finally(() => {
+        if (speak_abort_ref.current === controller && !controller.signal.aborted) {
+          speak_abort_ref.current = null;
+          set_speaking_message_id("");
+        }
+      });
   }
 
   /** Fetch the channel's verbatim ledger and recompute the WHOLE hash
@@ -3823,7 +3888,7 @@ export function TeamPage(props: {
     const replying = reply_to?.id === m.id;
     return (
       <div
-        className={`team_row ${can_post ? "has_actions" : ""} ${m.sender === seat ? "own" : ""} ${highlight ? "hit" : ""} ${replying ? "replying" : ""} ${unread ? "unread" : ""} ${m.retracted ? "retracted" : ""}`}
+        className={`team_row has_actions ${m.sender === seat ? "own" : ""} ${highlight ? "hit" : ""} ${replying ? "replying" : ""} ${unread ? "unread" : ""} ${m.retracted ? "retracted" : ""}`}
         key={m.id}
         id={`hubmsg-${m.id}`}
         onClick={() => row_click(m)}
@@ -3837,16 +3902,9 @@ export function TeamPage(props: {
         </span>
         <div className="team_row_main">
           <div className="team_row_head">
-            {/* Unread hint must be UNMISSABLE in every filter (operator
-                dm 63): a labeled pill, not a 7px dot. Reading clears it
-                (live set) — visible feedback — while the row itself stays
-                put under the Unread filter (snapshot). */}
-            {/* Two HONEST pills (dm 111: the same pill for both classes
-                taught "click clears it", which is false for debts): plain
-                unread clears on click (cursor advance); a sticky debt —
-                open/blocked, or a directive addressed to the seat — is
-                pinned by the hub until ANSWERED, so its pill says so and
-                clicking never pretends otherwise. */}
+            {/* Unread uses the blue row accent only. A separate NEW pill
+                repeated the same signal; sticky Hub debt remains labeled
+                because reading it does not resolve the obligation. */}
             {debt_map[m.channel]?.has(m.seq) ? (
               <>
                 <span
@@ -3869,8 +3927,6 @@ export function TeamPage(props: {
                   {decline_arm === m.id ? "sure? declines on the record" : "decline"}
                 </button>
               </>
-            ) : unread ? (
-              <span className="team_chip_new" title="Unread — your seat has not read past this message yet; clicking the row records the read">new</span>
             ) : null}
             {/* Authorship renders from the WIRE (sender on the envelope),
                 never client state — uic c1706. */}
@@ -3997,8 +4053,34 @@ export function TeamPage(props: {
             the always-on 11px links measured as the page's primary
             interaction (adversary find, earlier wave). Focusable, so
             keyboard users reach it without the hover. */}
-        {can_post ? (
-          <div className="team_row_rail">
+        <div className="team_row_rail">
+          {props.on_speak_message ? (
+            <button
+              className={`btn btn_icon ${speaking_message_id === m.id ? "team_speak_on" : ""}`}
+              aria-label={speaking_message_id === m.id ? "Speaking message" : "Speak message"}
+              title={speaking_message_id === m.id ? "Reading this message through the host-provided speech capability" : "Read this message aloud through the host-provided speech capability"}
+              disabled={speaking_message_id === m.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                speak_message(m);
+              }}
+            >
+              <Icon name="speaker" size={15} />
+            </button>
+          ) : null}
+          <button
+            className="btn btn_icon"
+            aria-label={copied_message_id === m.id ? "Copied message" : "Copy message"}
+            title={copied_message_id === m.id ? "Copied message" : "Copy message to the clipboard"}
+            onClick={(e) => {
+              e.stopPropagation();
+              void copy_message(m);
+            }}
+          >
+            <Icon name="copy" size={15} />
+          </button>
+          {can_post ? (
+            <>
             {/* Per-MESSAGE reactions (operator dm 82: "+1 -1 on each
                 message… we can do that on every message" — DMs included;
                 supersedes the dm-16 author-trust rail). Same direction
@@ -4108,8 +4190,9 @@ export function TeamPage(props: {
                 </button>
               </span>
             ) : null}
-          </div>
-        ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -5035,12 +5118,39 @@ export function TeamPage(props: {
                 ))}
               </div>
             ) : null}
-            {/* THE ROW (operator spec, dm 9 + 17:14): (message type) ×
-                (member dropdown when dm) × (multi-line input) × (Send) —
-                one line, aligned. Inside a dm channel the type selector
-                is pointless (it IS a dm) and the composer posts straight
-                to the conversation. */}
+            {/* Two bands: write first, then choose the delivery controls. */}
             <div className="team_compose_row">
+              <textarea
+                className="team_compose_text"
+                rows={3}
+                value={compose_text}
+                onChange={(e) => set_compose_text(e.target.value)}
+                placeholder={
+                  can_post
+                    ? reply_to
+                      ? `Reply to #${reply_to.seq} in #${selected}…`
+                      : is_dm_channel
+                        ? `Message ${dm_display_peer}…`
+                        : compose_kind === "dm"
+                          ? `Direct message${dm_peer.trim() ? ` to ${dm_peer.trim()}` : ""}…`
+                          : ai_available
+                            ? `Message #${selected || "…"} as ${meta?.seat || "operator"} — or /assistant <question>`
+                            : `Message #${selected || "…"} as ${meta?.seat || "operator"}`
+                    : health?.paused
+                      ? "The hub is paused by the operator — posting resumes when it does."
+                      : "Read-only: this Hub session cannot post."
+                }
+                disabled={!can_post}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || e.shiftKey) return;
+                  // IME commit must never send (kit ChatComposer contract,
+                  // carried over to the native row).
+                  if (e.nativeEvent.isComposing || (e as any).keyCode === 229) return;
+                  e.preventDefault();
+                  if (!posting && (compose_text.trim() || pending_attachments.length)) void post();
+                }}
+              />
+              <div className="team_compose_actions">
               <button
                 type="button"
                 className={`team_compose_control team_hub_data_toggle ${show_compose_hub_data ? "active" : ""}`}
@@ -5103,37 +5213,6 @@ export function TeamPage(props: {
                   />
                 )
               ) : null}
-              <textarea
-                ref={compose_ta_ref}
-                className="team_compose_text"
-                rows={2}
-                value={compose_text}
-                onChange={(e) => set_compose_text(e.target.value)}
-                placeholder={
-                  can_post
-                    ? reply_to
-                      ? `Reply to #${reply_to.seq} in #${selected}…`
-                      : is_dm_channel
-                        ? `Message ${dm_display_peer}…`
-                        : compose_kind === "dm"
-                          ? `Direct message${dm_peer.trim() ? ` to ${dm_peer.trim()}` : ""}…`
-                          : ai_available
-                            ? `Message #${selected || "…"} as ${meta?.seat || "operator"} — or /assistant <question>`
-                            : `Message #${selected || "…"} as ${meta?.seat || "operator"}`
-                    : health?.paused
-                      ? "The hub is paused by the operator — posting resumes when it does."
-                      : "Read-only: this Hub session cannot post."
-                }
-                disabled={!can_post}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter" || e.shiftKey) return;
-                  // IME commit must never send (kit ChatComposer contract,
-                  // carried over to the native row).
-                  if (e.nativeEvent.isComposing || (e as any).keyCode === 229) return;
-                  e.preventDefault();
-                  if (!posting && (compose_text.trim() || pending_attachments.length)) void post();
-                }}
-              />
               {/* Attach (agora 0091): offered in EVERY mode — posts that
                   land elsewhere (dm initiation, group creation) MIGRATE
                   the uploads into their destination channel (operator
@@ -5153,6 +5232,7 @@ export function TeamPage(props: {
                 onClick={() => attach_input_ref.current?.click()}
               >
                 <Icon name="paperclip" size={14} />
+                <span>Attach</span>
               </button>
               <button
                 className="btn primary team_send"
@@ -5179,6 +5259,7 @@ export function TeamPage(props: {
                           ? "Ask"
                           : "Send"}
               </button>
+              </div>
             </div>
           </div>
         </div>

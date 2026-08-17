@@ -595,34 +595,14 @@ export function reflow_prose_walls(text: string): string {
 // ------------------------------------------------------------- autolink
 
 const URL_RE = /https?:\/\/[^\s<>()[\]{}"'`]+/g;
-const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp)$/i;
 
-/** Rewrite an absolute same-origin Hub attachment URL to its root-relative
- * native API path. Only attachment fetches may embed. */
-function rewrite_hub_url(url: string, hub_base: string): string {
-  if (!hub_base) return url;
-  const base = hub_base.replace(/\/+$/, "");
-  if (!url.startsWith(base + "/")) return url;
-  const path = url.slice(base.length);
-  const m = path.match(/^\/channels\/([^/]+)\/attachments\/([A-Za-z0-9_.-]+)$/);
-  if (m) return `/channels/${m[1]}/attachments/${m[2]}`;
-  return url;
-}
-
-/** Autolink bare URLs in a message body for display (operator dm 39/44):
- *  the kit Markdown renders only explicit [x](url) links, so pasted URLs
- *  were dead text. Outside code spans/fences and existing markdown links:
- *    - image URLs (raster ext) that are same-origin Hub attachments EMBED
- *      inline — the render scope remains Hub-owned
- *      to hub-internal content ("it won't be external URLs"); CSP enforces
- *      the same boundary at the browser (img-src 'self').
- *    - every other URL becomes a clickable link (kit gives externals
- *      target=_blank; root-relative links are retargeted by the shell).
- *  The transform is display-only — the stored message never changes. */
-export function autolink_body(text: string, opts?: { hub_base?: string; app_origin?: string }): string {
+/** Render bare URLs as inert code-shaped references. A peer message never
+ *  turns the browser into another network client: Hub attachments use the
+ *  authenticated HubClient path, and the Markdown renderer separately
+ *  makes authored links and images inert. The optional argument remains for
+ *  source compatibility with the extracted Team surface. */
+export function autolink_body(text: string, _opts?: { hub_base?: string; app_origin?: string }): string {
   if (!text || !/https?:\/\//.test(text)) return text;
-  const hub_base = opts?.hub_base || "";
-  const app_origin = opts?.app_origin || "";
   // Split out fenced code blocks first, then inline code spans — URLs
   // inside either must stay untouched (they are code, not references).
   const fence_parts = text.split(/(```[\s\S]*?(?:```|$))/);
@@ -642,30 +622,15 @@ export function autolink_body(text: string, opts?: { hub_base?: string; app_orig
       }
       out.push(
         seg.replace(URL_RE, (url, offset: number) => {
-          // Already inside markdown link/image syntax? ](url) or (url)
-          // preceded by ] — check the char just before the match.
+          // Already inside markdown link/image syntax? `neutralize_unsafe_embeds`
+          // handles those whole tokens, so leave their destination alone here.
           const before = seg.slice(Math.max(0, offset - 2), offset);
           if (before.endsWith("](") || before.endsWith("(")) return url;
           // Trailing punctuation is prose, not URL (the classic "see
           // https://x.dev." case) — trim it out of the link.
           const trimmed = url.replace(/[.,;:!?]+$/, "");
           const tail = url.slice(trimmed.length);
-          // URL-shaped is not URL-parseable: "https://…/pic.png" (a literal
-          // ellipsis host, as agents write in prose) matches the regex but
-          // makes `new URL` THROW — which, unguarded, crashed the whole
-          // page render (operator dm 55). Unparseable tokens stay plain
-          // text; a linkifier must never take the page down.
-          let pathname = "";
-          try {
-            pathname = new URL(trimmed).pathname;
-          } catch {
-            return url;
-          }
-          const resolved = rewrite_hub_url(trimmed, hub_base);
-          const is_image = IMAGE_EXT_RE.test(pathname);
-          const is_internal = resolved.startsWith("/") || (app_origin !== "" && resolved.startsWith(app_origin + "/"));
-          if (is_image && is_internal) return `![image](${resolved})${tail}`;
-          return `[${trimmed}](${resolved})${tail}`;
+          return `\`${trimmed}\`${tail}`;
         })
       );
     }
@@ -675,51 +640,20 @@ export function autolink_body(text: string, opts?: { hub_base?: string; app_orig
 
 // -------------------------------------------------- embed-target defang
 
-/** The ONLY same-origin path a message is allowed to EMBED or LINK: a hub
- *  attachment blob (content-addressed, side-effect-free GET). */
-const SAFE_ATTACHMENT_RE = /^\/channels\/[^/]+\/attachments\/[A-Za-z0-9_-]+$/;
-
-/** A same-origin Hub path that is NOT a safe attachment. Some are
- *  SIDE-EFFECTING GETs —
- *  `GET /channels/{c}/messages/{id}` is the hub's read_message (records a
- *  read, unpins criticals). CSP is `img-src 'self'`, so the kit rendering
- *  `![x](/channels/.../messages/id)` from an untrusted message body emits an
- *  <img> that fires that GET the instant the operator VIEWS the message —
- *  a zero-click read-receipt forgery on his seat (verified live).
- *
- *  ROBUSTNESS (adversary b22b19ed, parser-differential bypass): the check
- *  must see the SAME href the renderer will. Anything under /api/ that is
- *  not an EXACT safe-attachment path is dangerous — and a whitespace or a
- *  `..` segment ALONE is disqualifying, because the browser collapses
- *  `.../attachments/z /../../messages/ID` back to a side-effecting route
- *  after the check. SAFE_ATTACHMENT_RE is anchored + strict-charset so it
- *  already rejects both, but we assert them explicitly as a named guard. */
-function is_dangerous_same_origin(url: string): boolean {
-  const u = url.trim();
-  if (!u.startsWith("/api/") && !u.startsWith("/channels/")) return false;
-  if (/\s/.test(u) || u.includes("..")) return true; // browser-normalizes into another route
-  return !SAFE_ATTACHMENT_RE.test(u);
-}
-
-/** Defang markdown links/images in an untrusted message body whose target
- *  is a same-origin Hub route other than a safe attachment. The whole
- *  `![alt](url)` / `[alt](url)` becomes inert inline code — never an <img>
- *  (no auto-fire) and never a link (no one-click fire). Legitimate embeds
- *  (hub attachments, data:, external) pass through untouched. Display-only;
- *  the stored message is unchanged.
- *
- *  The href is captured up to `)` — the SAME boundary the kit's image/link
- *  parser uses (markdown.tsx). Capturing only up to whitespace (the earlier
- *  bug) let an attacker hide a `..`-traversal tail past the check that the
- *  kit still emitted and the browser then normalized into a live route
- *  (adversary b22b19ed P1). Matching the renderer's boundary closes it. */
+/** Defang Markdown links/images in untrusted message text. WUI deliberately
+ *  has no general web transport: Hub attachments are fetched by HubClient
+ *  and rendered as object URLs elsewhere, so message-body markup never
+ *  creates an image or navigable link. The Markdown component repeats this
+ *  policy as its renderer-level defense. Display-only; stored text is
+ *  unchanged.
+ *  The full destination is replaced before Markdown gets it; the renderer is
+ *  the independent defense if a new Markdown construct slips past this pass. */
 export function neutralize_unsafe_embeds(text: string): string {
-  if (!text || (!text.includes("/api/") && !text.includes("/channels/"))) return text;
+  if (!text || !text.includes("](")) return text;
   const MD_LINK_OR_IMG = /(!?)\[([^\]]*)\]\(([^)]+)\)/g;
-  return text.replace(MD_LINK_OR_IMG, (whole, _bang, alt, url) => {
-    if (!is_dangerous_same_origin(String(url))) return whole;
+  return text.replace(MD_LINK_OR_IMG, (_whole, _bang, alt, url) => {
     const shown = String(alt || "").trim() || String(url);
-    return "`" + shown.replace(/`/g, "") + " (blocked link)`";
+    return "`" + shown.replace(/`/g, "") + " (link disabled)`";
   });
 }
 

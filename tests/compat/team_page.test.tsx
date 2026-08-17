@@ -128,8 +128,8 @@ function make_advisor(reply = "the summary") {
   return vi.fn(async () => reply);
 }
 
-function render_page(): void {
-  render(<TeamPage advisor={make_advisor()} />);
+function render_page(props: Partial<React.ComponentProps<typeof TeamPage>> = {}): void {
+  render(<TeamPage advisor={make_advisor()} {...props} />);
 }
 
 describe("member-scoped channel selection", () => {
@@ -993,6 +993,7 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     expect(screen.getByTitle("1 unread message in this loaded view")).toBeTruthy();
     expect(screen.getByTitle("3 pending questions served by the Hub")).toBeTruthy();
     expect(screen.queryByText("missed?")).toBeNull();
+    expect(document.querySelector(".team_chip_new")).toBeNull();
   });
 
   it("keeps message actions in the keyboard-reachable bottom-right rail", async () => {
@@ -1006,6 +1007,62 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     expect(screen.getByRole("button", { name: "+1 this message" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "−1 this message" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "↩ Reply" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy message" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Speak message" })).toBeNull();
+  });
+
+  it("keeps copy local and delegates speech only to an explicit host capability", async () => {
+    const clipboard = { writeText: vi.fn(async () => undefined) };
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
+    const speak = vi.fn(async () => undefined);
+    stub_hub({
+      messages: [{ ...base, id: "speak-root", seq: 1, sender: "core", status: "fyi", title: "Speech title", body: "Speech body", reply_to: null }],
+    });
+    render_page({ on_speak_message: speak });
+    await screen.findByText("Speech title");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("Speech title\n\nSpeech body"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Speak message" }));
+    await waitFor(() => expect(speak).toHaveBeenCalledTimes(1));
+    const [message, signal] = speak.mock.calls[0] as unknown as [Record<string, unknown>, AbortSignal];
+    expect(message).toEqual({ id: "speak-root", channel: "commons", seq: 1, sender: "core", title: "Speech title", body: "Speech body" });
+    expect(signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("renders peer Markdown links and images without browser network elements", async () => {
+    stub_hub({
+      messages: [{ ...base, id: "inert-markdown", seq: 1, sender: "core", status: "fyi", title: "untrusted markup", body: "![tracker](https://evil.example/pixel.png) and [guide](https://evil.example/guide)", reply_to: null }],
+    });
+    render_page();
+    await screen.findByText("untrusted markup");
+    const body = document.querySelector("#hubmsg-inert-markdown .team_row_body");
+    expect(body?.querySelector("img")).toBeNull();
+    expect(body?.querySelector("a")).toBeNull();
+    expect(body?.textContent).toContain("link disabled");
+  });
+
+  it("puts the writing field before the delivery controls in the two-band composer", async () => {
+    stub_hub();
+    render_page();
+    await screen.findAllByText("#commons");
+    const composer = document.querySelector(".team_compose_row");
+    expect(composer?.firstElementChild?.classList.contains("team_compose_text")).toBe(true);
+    expect(composer?.querySelector(".team_compose_actions .team_attach_btn")).toBeTruthy();
+    expect(composer?.querySelector(".team_send")).toBeTruthy();
+    const text = composer?.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(text, { target: { value: "x".repeat(20_000) } });
+    expect(text.style.height).toBe("");
+  });
+
+  it("emits native Markdown lists under the message text", async () => {
+    stub_hub({
+      messages: [{ ...base, id: "list-root", seq: 1, sender: "core", status: "fyi", title: "list alignment", body: "Context.\n\n- first item\n- second item", reply_to: null }],
+    });
+    render_page();
+    await screen.findByText("list alignment");
+    expect(document.querySelector("#hubmsg-list-root .team_row_body ul > li")).toBeTruthy();
   });
 
   it("renders every loaded reply when a thread is open", async () => {
