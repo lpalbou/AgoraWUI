@@ -2,6 +2,13 @@
 
 All notable user-visible changes are documented here.
 
+## Unreleased
+
+### Fixed
+
+- The standalone Team wrapper now provides the bounded flex layout required for long message threads to scroll in their pane.
+- The initial Team channel and channel rail now include only Hub-readable member channels, preventing a fresh direct-Hub session from opening an unreadable public room.
+
 ## 0.1.0 — 2026-08-11
 
 ### Added

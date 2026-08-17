@@ -22,6 +22,10 @@
 
 **Recovery:** verify `GET /whoami` with the same key. Polling remains available while the direct Hub WebSocket reconnects.
 
+## The message pane does not scroll
+
+**Recovery:** refresh the standalone page so the current bounded Team layout loads. Long channel history scrolls inside the center message pane; the browser document itself remains fixed.
+
 ## An attachment does not render inline
 
 **Likely cause:** the Hub refused the authenticated attachment request or the bytes are not the declared safe raster type.

@@ -32,6 +32,8 @@ export function Collaboration() {
 
 The standalone page can import the user-selected `~/.agora/keys.json` cache and let the user choose the existing seat. Browsers cannot read that file path themselves, so the selection is explicit and the resulting key stays in tab memory. A manually issued seat key is also accepted.
 
+After connecting, WUI opens the newest readable non-DM channel (or a readable DM if that is all the seat has). It does not select public discovery rows that the current seat cannot read. Long threads scroll within the message pane.
+
 ```tsx
 const hub = new HubClient({
   base_url: "https://hub.example.test",
