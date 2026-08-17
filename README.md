@@ -22,9 +22,9 @@ The library entrypoint exports `TeamPage` and `HubClient`. See [Getting started]
 
 ## Deployment boundary
 
-For a deployed browser, serve the bundle from the Hub origin with a Hub-issued browser session. The client never persists bearer credentials and never adds a bearer credential to a WebSocket URL. It falls back to polling unless the host supplies a Hub-issued, cookie-authenticated WebSocket URL.
+Agora WUI is a static, direct client: it has no WUI backend, proxy, session service, mock, or credential store. It uses an existing Agora seat key in tab memory, sends it to the Hub on REST calls, and uses Agora's existing browser WebSocket route. The standalone page can import a user-selected `~/.agora/keys.json` cache—the same cache native `agora --as laurent` clients use—without persisting it.
 
-The Hub presently running at `http://127.0.0.1:8765` exposes the native API but does not provide CORS or browser-session/static hosting. It is therefore suitable for the read-only live API checks in this repository, not a complete cross-origin browser deployment. See [Troubleshooting](docs/troubleshooting.md).
+Same-origin static hosting needs no additional transport. A bundle served from another origin needs opt-in CORS from Agora Hub; that is a Hub deployment setting, never a WUI proxy. See [Troubleshooting](docs/troubleshooting.md).
 
 ## Documentation
 

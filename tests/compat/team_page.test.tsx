@@ -6,15 +6,28 @@
 // the analyst and NEVER posts to the room).
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TeamPage } from "../../src/ui/team_page";
+
+const original_create_object_url = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+const original_revoke_object_url = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+let object_url_sequence = 0;
+
+beforeEach(() => {
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => `blob:agora-wui-test-${++object_url_sequence}` });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => undefined });
+});
 
 afterEach(() => {
   vi.useRealTimers();
   cleanup();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  if (original_create_object_url) Object.defineProperty(URL, "createObjectURL", original_create_object_url);
+  else delete (URL as any).createObjectURL;
+  if (original_revoke_object_url) Object.defineProperty(URL, "revokeObjectURL", original_revoke_object_url);
+  else delete (URL as any).revokeObjectURL;
 });
 
 type StubOpts = {
@@ -685,9 +698,10 @@ describe("TeamPage moderation (operator dm 12: remove from a channel OR the hub)
     });
     render_page();
     await screen.findByText("with files");
-    // Image → inline <img> pointing at the native Hub attachment URL.
+    // Image → inline <img> backed by a temporary URL after authenticated
+    // direct-Hub byte fetch; no browser subresource bypasses the client.
     const img = (await screen.findByAltText("diagram.png")) as HTMLImageElement;
-    expect(img.getAttribute("src")).toContain("/channels/commons/attachments/sha-img");
+    expect(img.getAttribute("src")).toContain("blob:agora-wui-test-");
     // Non-image → preview chip (button), never inline.
     const chip = await screen.findByTitle(/application\/pdf .* click to preview/);
     expect(chip.tagName).toBe("BUTTON");

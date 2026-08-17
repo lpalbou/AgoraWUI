@@ -13,7 +13,9 @@ All notable user-visible changes are documented here.
 ### Changed
 
 - Browser requests now use the Agora Hub's root API routes and protocol `agora/0.4`.
-- Browser credentials remain in memory only. WebSocket transport requires a Hub-issued cookie-authenticated URL; polling remains available without it.
+- WUI is now explicitly a direct, thin Agora client: every REST call carries the existing memory-only seat key plus `X-Agora-Client`, attachment bytes follow the same path, and collaboration authority remains entirely in Agora Hub.
+- Browser WebSockets now use Agora Hub's existing `/ws?token=KEY` route; no WUI session or proxy is introduced.
+- The standalone page can import a user-selected existing Agora `keys.json` cache, matching native `--as` client setup without persisting credentials.
 
 ### Removed
 

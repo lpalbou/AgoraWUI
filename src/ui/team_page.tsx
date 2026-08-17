@@ -94,6 +94,67 @@ const INLINE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "ima
  *  content (size unknown before read) is clamped with an explicit label. */
 const MAX_PREVIEW_BYTES = 256 * 1024;
 
+/** Inline attachment media still travels through HubClient first: native
+ * browser <img> requests cannot carry a bearer header. The object URL is a
+ * short-lived presentation artifact, never a second transport or cache. */
+function AttachmentThumbnail({ hub, channel, attachment, onOpen }: {
+  hub: HubClient;
+  channel: string;
+  attachment: HubAttachment;
+  onOpen: () => void;
+}): React.ReactElement {
+  const [url, set_url] = useState("");
+  const [failed, set_failed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let object_url = "";
+    set_url("");
+    set_failed(false);
+    if (typeof URL.createObjectURL !== "function") {
+      set_failed(true);
+      return;
+    }
+    void hub.attachment_blob(channel, attachment.id)
+      .then((blob) => {
+        if (!active) return;
+        object_url = URL.createObjectURL(blob);
+        set_url(object_url);
+      })
+      .catch(() => {
+        if (active) set_failed(true);
+      });
+    return () => {
+      active = false;
+      if (object_url) URL.revokeObjectURL(object_url);
+    };
+  }, [hub, channel, attachment.id]);
+
+  return (
+    <button
+      className="team_attach_img_link"
+      title={`${attachment.filename} · ${human_size(attachment.size)} — click to preview`}
+      onClick={onOpen}
+    >
+      {url && !failed ? (
+        <img
+          className="team_attach_img"
+          src={url}
+          alt={attachment.filename}
+          loading="lazy"
+          onError={() => set_failed(true)}
+        />
+      ) : (
+        <span className="team_attach_chip team_attach_fallback">
+          <Icon name="paperclip" size={11} />
+          <span className="team_attach_name">{attachment.filename}</span>
+          <span className="muted">{failed ? "preview unavailable" : human_size(attachment.size)}</span>
+        </span>
+      )}
+    </button>
+  );
+}
+
 /** Folder/file glyphs for the Drive-style browser (dm 53) — the ui-kit icon
  *  set has neither; propose upstream if a second consumer appears. */
 function FolderGlyph(): React.ReactElement {
@@ -601,6 +662,15 @@ export function TeamPage(props: {
   const [fs_cwd, set_fs_cwd] = useState("");
   const [file_view, set_file_view] = useState<FileView | null>(null);
 
+  // Every authenticated attachment preview is a temporary blob URL. Release
+  // it as soon as the viewer changes or closes; nothing becomes a WUI cache.
+  useEffect(() => {
+    const url = file_view?.url;
+    return () => {
+      if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+    };
+  }, [file_view?.url]);
+
   // Channel assistant (LLM over the current channel window).
   const [ai_thread, set_ai_thread] = useState<TeamAiTurn[]>([]);
   const [ai_question, set_ai_question] = useState("");
@@ -892,9 +962,9 @@ export function TeamPage(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Live updates use only a Hub-issued cookie-authenticated WebSocket. A
-  // bearer never goes into a browser URL; until that Hub capability exists,
-  // the established 5s poll is the complete and explicit fallback.
+  // Browser WebSocket cannot set Authorization. HubClient therefore uses the
+  // Agora-native /ws?token=KEY lane from the in-memory existing seat key;
+  // polling remains the complete fallback if the socket is unavailable.
   useEffect(() => {
     const socket_url = hub.ws_url();
     if (!socket_url) {
@@ -1874,8 +1944,8 @@ export function TeamPage(props: {
   }
 
   /** Open a message attachment in the shared viewer (operator dm 35: click
-   *  to PREVIEW, not just download). Images show inline from the Hub URL;
-   *  md/text are fetched and rendered; everything else offers download.
+   *  to PREVIEW, not just download). Every byte comes from the authenticated
+   *  Hub client, then receives a short-lived object URL for presentation.
    *  Generation-guarded like open_fs_file (security adversary P2). */
   /** Open an attachment preview. Takes the owning channel (not a message):
    *  pending composer attachments are already uploaded blobs in the current
@@ -1883,35 +1953,30 @@ export function TeamPage(props: {
    *  serves both posted and pending chips. */
   async function open_attachment(att_channel: string, a: HubAttachment): Promise<void> {
     const gen = chan_gen.current;
-    const url = hub.attachment_url(att_channel, a.id);
     const mode = resolve_file_mode(a.filename, a.content_type);
-    if (mode === "image") {
-      set_file_view({ name: a.filename, mode: "image", url, content_type: a.content_type, size: a.size });
-      return;
-    }
-    if (mode === "md" || mode === "text") {
-      // Oversize text never renders inline (security adversary P1: the
-      // markdown parser is superlinear on pathological input — a multi-MB
-      // file must not freeze the tab). Offer download instead.
-      if (a.size > MAX_PREVIEW_BYTES) {
-        set_file_view({ name: a.filename, mode: "download", url, content_type: a.content_type, size: a.size,
-          error: `too large to preview inline (${human_size(a.size)} > ${human_size(MAX_PREVIEW_BYTES)}) — download to view` });
+    set_file_view({ name: a.filename, mode, content_type: a.content_type, size: a.size, loading: true });
+    try {
+      const blob = await hub.attachment_blob(att_channel, a.id);
+      if (gen !== chan_gen.current) return;
+      const url = URL.createObjectURL(blob);
+      if (mode === "md" || mode === "text") {
+        // Oversize text never renders inline (security adversary P1: the
+        // markdown parser is superlinear on pathological input — a multi-MB
+        // file must not freeze the tab). The object URL still offers a direct
+        // download without dropping the authenticated Hub boundary.
+        if (a.size > MAX_PREVIEW_BYTES) {
+          set_file_view({ name: a.filename, mode: "download", url, content_type: a.content_type, size: a.size,
+            error: `too large to preview inline (${human_size(a.size)} > ${human_size(MAX_PREVIEW_BYTES)}) — download to view` });
+          return;
+        }
+        set_file_view({ name: a.filename, mode, url, content_type: a.content_type, size: a.size, text: clamp_preview(await blob.text()) });
         return;
       }
-      set_file_view({ name: a.filename, mode, url, content_type: a.content_type, size: a.size, loading: true });
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-        const text = await res.text();
-        if (gen !== chan_gen.current) return; // switched away — drop
-        set_file_view({ name: a.filename, mode, url, content_type: a.content_type, size: a.size, text: clamp_preview(text) });
-      } catch (e: any) {
-        if (gen !== chan_gen.current) return;
-        set_file_view({ name: a.filename, mode: "download", url, content_type: a.content_type, size: a.size, error: String(e?.message || e || "failed to load") });
-      }
-      return;
+      set_file_view({ name: a.filename, mode, url, content_type: a.content_type, size: a.size });
+    } catch (e: any) {
+      if (gen !== chan_gen.current) return;
+      set_file_view({ name: a.filename, mode: "download", content_type: a.content_type, size: a.size, error: String(e?.message || e || "failed to load") });
     }
-    set_file_view({ name: a.filename, mode: "download", url, content_type: a.content_type, size: a.size });
   }
 
   /** Moderation acts (agora c2263 + operator dm 12): channel-scope kick
@@ -2336,9 +2401,7 @@ export function TeamPage(props: {
     const att_failed: string[] = [];
     for (const a of atts) {
       try {
-        const res = await fetch(hub.attachment_url(source_channel, a.id));
-        if (!res.ok) throw new Error(`fetch ${res.status}`);
-        const blob = await res.blob();
+        const blob = await hub.attachment_blob(source_channel, a.id);
         const file = new File([blob], a.filename || "attachment", { type: a.content_type || blob.type || "application/octet-stream" });
         const up = await hub.upload_attachment(target_channel, file);
         migrated.push({ id: up.id, filename: up.filename || a.filename });
@@ -3555,38 +3618,16 @@ export function TeamPage(props: {
           // (hub dedupes by content hash, but a malformed payload could
           // repeat) must not collide React keys (adversary b22b19ed).
           const key = `${a.id}:${i}`;
-          const url = hub.attachment_url(m.channel, a.id);
           const inline = INLINE_IMAGE_TYPES.has(String(a.content_type || "").toLowerCase());
           if (inline) {
-            // Clicking the thumbnail opens the shared preview (operator dm
-            // 35: click to preview); a plain button keeps it keyboard-safe.
             return (
-              <button
+              <AttachmentThumbnail
                 key={key}
-                className="team_attach_img_link"
-                title={`${a.filename} · ${human_size(a.size)} — click to preview`}
-                onClick={() => void open_attachment(m.channel, a)}
-              >
-                <img
-                  className="team_attach_img"
-                  src={url}
-                  alt={a.filename}
-                  loading="lazy"
-                  onError={(e) => {
-                    // The bytes weren't a real image (or the hub octet-streamed
-                    // it) — swap to a download chip rather than a broken icon.
-                    const el = e.currentTarget;
-                    el.style.display = "none";
-                    const chip = el.parentElement?.querySelector(".team_attach_fallback");
-                    if (chip) (chip as HTMLElement).style.display = "inline-flex";
-                  }}
-                />
-                <span className="team_attach_chip team_attach_fallback" style={{ display: "none" }}>
-                  <Icon name="paperclip" size={11} />
-                  <span className="team_attach_name">{a.filename}</span>
-                  <span className="muted">{human_size(a.size)}</span>
-                </span>
-              </button>
+                hub={hub}
+                channel={m.channel}
+                attachment={a}
+                onOpen={() => void open_attachment(m.channel, a)}
+              />
             );
           }
           // Non-image: a file-icon chip that PREVIEWS on click (md/text

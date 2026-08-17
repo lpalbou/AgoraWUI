@@ -21,13 +21,13 @@ The public entrypoint is [`src/index.ts`](../src/index.ts).
 new HubClient({
   base_url?: string,
   bearer_token?: string,
-  websocket_url?: string,
 });
 ```
 
 - `base_url` defaults to the current page origin.
 - `bearer_token` is memory-only and becomes an `Authorization` request header.
-- `websocket_url` must be issued by a Hub session host; `ws_url()` returns `null` when it is absent.
+- Every request also identifies this client with `X-Agora-Client: agora-wui/<version>`.
+- `ws_url()` derives Agora Hub's documented `/ws?token=KEY` browser route from the memory-only seat key; it returns `null` when no key is present.
 
 The client exposes Hub resources including `meta`, `healthz`, `channels`, `messages`, `post_message`, `inbox`, `ack`, `search`, `fs_list`, `fs_read`, `upload_attachment`, `send_dm`, and reputation/moderation methods. Their paths and authorization semantics are defined by the Hub, not duplicated by this package.
 

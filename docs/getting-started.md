@@ -4,7 +4,7 @@
 
 - Node.js 20 or later for development and builds.
 - An Agora Hub that speaks `agora/0.4`.
-- A browser authentication arrangement supplied by the Hub host.
+- An existing Agora seat key (for example, the entry already cached for `agora --as laurent`).
 
 Install and build the package:
 
@@ -15,32 +15,35 @@ npm run build
 
 ## Embed the Team UI
 
-Use the library from a React host. In production the usual configuration is an empty `base_url`, which makes requests relative to the Hub-origin page and lets the browser send a Hub session cookie.
+Use the library from a React host. Supply the existing Agora seat key only in memory.
 
 ```tsx
 import { HubClient, TeamPage } from "agora-wui";
 
-const hub = new HubClient();
+const hub = new HubClient({
+  base_url: "http://127.0.0.1:8765",
+  bearer_token: existingSeatKey,
+});
 
 export function Collaboration() {
   return <TeamPage hub={hub} />;
 }
 ```
 
-An integrator that has an ephemeral bearer may provide it to `HubClient` in memory. It must not place the token in source code, browser storage, a query string, or a WebSocket URL.
+The standalone page can import the user-selected `~/.agora/keys.json` cache and let the user choose the existing seat. Browsers cannot read that file path themselves, so the selection is explicit and the resulting key stays in tab memory. A manually issued seat key is also accepted.
 
 ```tsx
 const hub = new HubClient({
   base_url: "https://hub.example.test",
-  bearer_token: suppliedForThisTab,
+  bearer_token: existingSeatKey,
 });
 ```
 
 ## Browser deployment
 
-The browser must either be served from the Hub origin with a Hub-issued session or be permitted by the Hub's CORS policy. The preferred arrangement is same-origin Hub hosting because it also allows attachment rendering and authenticated live updates without exposing credentials.
+The bundle calls Agora Hub directly. Same-origin static hosting works with the native Hub routes. A portable static bundle served from a different origin requires Agora Hub's opt-in CORS configuration for that origin and the `Authorization`, `Content-Type`, and `X-Agora-Client` headers.
 
-The current local Hub on port 8765 serves native API routes but does not provide the required CORS, static-asset, or browser-session surface. Build verification and read-only Hub checks can run against it; an authenticated browser session needs the Hub hosting/session capability first.
+Browser WebSockets use the existing Hub `/ws?token=KEY` route because browser WebSocket constructors cannot add an `Authorization` header. This key is derived only from the in-memory supplied seat key; WUI does not mint, store, or exchange it.
 
 ## Optional AI features
 

@@ -10,7 +10,7 @@ No. Agora Hub is the only collaboration service it calls. The Hub owns authoriza
 
 ## Why is polling present when Agora supports live updates?
 
-Browser WebSockets cannot safely add an arbitrary authorization header. The WUI uses an explicit Hub-issued, cookie-authenticated WebSocket URL when a host provides one. Polling remains the correct complete fallback when it does not.
+Browser WebSockets cannot add an arbitrary authorization header. WUI uses the Hub's existing `/ws?token=KEY` browser route from the in-memory Agora seat key. Polling remains the correct fallback if the socket cannot connect.
 
 ## Can generated AI messages be posted automatically?
 
@@ -18,4 +18,4 @@ No. The optional advisor is read-only. It can summarize context or answer `/assi
 
 ## Can I use a local Hub at port 8765 from Vite at port 5173?
 
-Not with the current Hub configuration: it does not send browser CORS permissions. Use a Hub-origin browser session/static deployment when that Hub capability is available. See [Troubleshooting](troubleshooting.md).
+Yes, once Agora Hub enables its opt-in CORS configuration for `http://127.0.0.1:5173` (or your chosen static origin). WUI calls the Hub directly; it does not run a development proxy. See [Troubleshooting](troubleshooting.md).

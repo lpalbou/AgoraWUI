@@ -1,7 +1,12 @@
 // Typed native Agora Hub client for the Team page.
 //
 // Paths mirror the Hub API verbatim. This package owns no server or
-// credential store: a host supplies an ephemeral authenticated session.
+// credential store: a host supplies an existing Agora seat key in memory.
+
+/** Sent on every REST request. The Hub uses this to distinguish current
+ * clients from pre-handshake clients; it is client identification, never a
+ * second authentication scheme. */
+export const AGORA_WUI_CLIENT_HEADER = "agora-wui/0.1.0";
 
 export type HubMeta = { ok: boolean; hub_url: string; seat: string; seat_key_present: boolean };
 
@@ -249,21 +254,17 @@ export type HubReputationVote = {
 export type HubClientOptions = {
   /** Empty means the browser's current origin (the production Hub-hosted mode). */
   base_url?: string;
-  /** Ephemeral bearer supplied by a host. It is never persisted by this client. */
+  /** Existing Agora seat key supplied by the user or a host. Never persisted. */
   bearer_token?: string;
-  /** A Hub-issued cookie-authenticated WS URL. Bearer query strings are deliberately unsupported. */
-  websocket_url?: string;
 };
 
 export class HubClient {
   private readonly base_url: string;
   private readonly bearer_token: string;
-  private readonly websocket_url: string;
 
   constructor(options: HubClientOptions = {}) {
     this.base_url = String(options.base_url || "").replace(/\/+$/, "");
     this.bearer_token = String(options.bearer_token || "");
-    this.websocket_url = String(options.websocket_url || "");
   }
 
   private url(path: string): string {
@@ -274,6 +275,7 @@ export class HubClient {
     const headers = new Headers(init?.headers);
     if (json && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     if (this.bearer_token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${this.bearer_token}`);
+    if (!headers.has("X-Agora-Client")) headers.set("X-Agora-Client", AGORA_WUI_CLIENT_HEADER);
     return headers;
   }
 
@@ -305,6 +307,31 @@ export class HubClient {
       throw err;
     }
     return body;
+  }
+
+  /** Read Hub attachment bytes through the same authenticated direct-client
+   * path as every other resource. Browser image/download elements cannot add
+   * Authorization, so callers create an object URL from this result. */
+  private async _blob(label: string, path: string): Promise<Blob> {
+    const r = await fetch(this.url(path), {
+      signal: AbortSignal.timeout(20_000),
+      headers: this.headers(),
+      credentials: "same-origin",
+    });
+    if (!r.ok) {
+      const text = await r.text();
+      let detail = text;
+      try {
+        const parsed = JSON.parse(text);
+        detail = String(parsed?.detail || parsed?.error || text);
+      } catch {
+        // Keep the Hub's non-JSON teaching detail when present.
+      }
+      const err = new Error(`${label} failed: ${detail}`) as Error & { status?: number };
+      err.status = r.status;
+      throw err;
+    }
+    return await r.blob();
   }
 
   async meta(): Promise<HubMeta> {
@@ -484,10 +511,17 @@ export class HubClient {
     return body as HubAttachment;
   }
 
-  /** Hub attachment bytes. Cookie-authenticated same-origin hosts may use
-   * this directly; bearer-only hosts must fetch and preview explicitly. */
+  /** Hub attachment route. This is useful for diagnostics; browser UI code
+   * must use attachment_blob() so it carries the existing seat key. */
   attachment_url(channel: string, id: string): string {
     return this.url(`/channels/${encodeURIComponent(channel)}/attachments/${encodeURIComponent(id)}`);
+  }
+
+  async attachment_blob(channel: string, id: string): Promise<Blob> {
+    return await this._blob(
+      "hub_attachment",
+      `/channels/${encodeURIComponent(channel)}/attachments/${encodeURIComponent(id)}`,
+    );
   }
 
   /** Cursor ack — EXPLICIT act only (agency rule 1: acking is "I have
@@ -872,11 +906,24 @@ export class HubClient {
     )) as { removed: number };
   }
 
-  /** Live updates require a Hub-issued cookie session. Never put a bearer
-   * into a URL because browser WebSocket cannot safely send an Authorization
-   * header. Polling remains the complete fallback until the Hub session
-   * contract is available. */
+  /** Browser WebSocket constructors cannot set Authorization. Agora's native
+   * browser lane is /ws?token=KEY, so derive that existing Hub endpoint from
+   * the in-memory seat key. No WUI session, proxy, or minting is involved. */
   ws_url(): string | null {
-    return this.websocket_url || null;
+    const rest = this.base_url || (typeof window === "undefined" ? "" : window.location.origin);
+    if (!rest || !this.bearer_token) return null;
+    try {
+      const url = new URL(rest);
+      if (url.protocol === "https:") url.protocol = "wss:";
+      else if (url.protocol === "http:") url.protocol = "ws:";
+      else return null;
+      url.pathname = `${url.pathname.replace(/\/+$/, "")}/ws`;
+      url.search = "";
+      url.hash = "";
+      url.searchParams.set("token", this.bearer_token);
+      return url.toString();
+    } catch {
+      return null;
+    }
   }
 }
