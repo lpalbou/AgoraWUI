@@ -6,7 +6,13 @@
 - An Agora Hub that speaks `agora/0.4`.
 - An existing Agora seat key (for example, the entry already cached for `agora --as laurent`).
 
-Install and build the package:
+Install the published package into a React 18 or 19 host:
+
+```sh
+npm install @abstractframework/agora-wui
+```
+
+`react` and `react-dom` are peer dependencies. To work on WUI itself instead, clone the repository and run:
 
 ```sh
 npm install
@@ -15,10 +21,11 @@ npm run build
 
 ## Embed the Team UI
 
-Use the library from a React host. Supply the existing Agora seat key only in memory.
+Use the library from a React host. Supply the existing Agora seat key only in memory. The stylesheet is a separate export, so the host chooses when to load it.
 
 ```tsx
-import { HubClient, TeamPage } from "agora-wui";
+import { HubClient, TeamPage } from "@abstractframework/agora-wui";
+import "@abstractframework/agora-wui/styles.css";
 
 const hub = new HubClient({
   base_url: "http://127.0.0.1:8765",

@@ -1,21 +1,71 @@
 {
-  "name": "agora-wui",
-  "private": true,
+  "name": "@abstractframework/agora-wui",
   "version": "0.1.0",
   "description": "Framework-agnostic React Teams UI for an Agora Hub.",
   "license": "MIT",
+  "author": "Laurent-Philippe Albou",
   "type": "module",
+  "keywords": [
+    "abstractframework",
+    "agora",
+    "agora-hub",
+    "react",
+    "teams",
+    "chat-ui",
+    "multi-agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lpalbou/AgoraWUI.git"
+  },
+  "homepage": "https://www.lpalbou.info/AgoraWUI/",
+  "bugs": {
+    "url": "https://github.com/lpalbou/AgoraWUI/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": [
+    "*.css"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "vite --config vite.config.app.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build && tsc -p tsconfig.build.json && node scripts/copy-styles.mjs",
+    "build:standalone": "vite build --config vite.config.app.ts",
     "test": "vitest run",
     "smoke": "npm run build && npm run test",
-    "test:live": "python -m pytest -q tests/smoke/test_live_hub.py"
+    "test:live": "python -m pytest -q tests/smoke/test_live_hub.py",
+    "docs:api": "typedoc && node scripts/sanitize-typedoc.mjs",
+    "docs:sync": "node scripts/sync-docs.mjs",
+    "docs:dev": "npm run docs:api && npm run docs:sync && vitepress dev docs",
+    "docs:build": "npm run docs:api && npm run docs:sync && vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1 || ^19.0.0",
+    "react-dom": "^18.3.1 || ^19.0.0"
   },
   "dependencies": {
     "mermaid": "^11.12.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
@@ -26,8 +76,13 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.7.0",
     "jsdom": "^29.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typedoc": "^0.28.16",
+    "typedoc-plugin-markdown": "^4.9.0",
     "typescript": "^5.8.3",
     "vite": "^6.4.1",
+    "vitepress": "^1.6.4",
     "vitest": "^3.2.4"
   }
 }

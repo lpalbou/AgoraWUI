@@ -4,6 +4,11 @@ All notable user-visible changes are documented here.
 
 ## Unreleased
 
+### Added
+
+- Published to npm as `@abstractframework/agora-wui`: an ES library build with generated type declarations, `react`/`react-dom` as peer dependencies, and the stylesheet as a separate `@abstractframework/agora-wui/styles.css` export.
+- GitHub Actions CI (build, test, standalone bundle, package-contents check), a VitePress documentation site with a TypeDoc-generated API reference deployed to GitHub Pages, and a tag-driven release workflow that publishes to npm with provenance.
+
 ### Fixed
 
 - Message cards now provide a local clipboard Copy action in the lower-right hover/focus rail. Speech remains an explicit optional host callback, so WUI never chooses a provider or voice policy.

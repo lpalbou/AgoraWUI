@@ -16,12 +16,16 @@ function source_files(directory: string): string[] {
 describe("package boundary", () => {
   it("has no AbstractFramework, mock-server, or legacy proxy runtime", () => {
     const source = source_files(join(ROOT, "src")).map((file) => readFileSync(file, "utf8")).join("\n");
-    const manifest = readFileSync(join(ROOT, "package.json"), "utf8");
+    const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+    // The package is published under the @abstractframework scope, but must not
+    // depend on any AbstractFramework runtime package.
+    const dependency_names = ["dependencies", "peerDependencies", "devDependencies", "optionalDependencies"]
+      .flatMap((field) => Object.keys(manifest[field] || {}));
 
     expect(source).not.toMatch(/@abstractframework\//);
     expect(source).not.toMatch(/abstractcontinuum/i);
     expect(source).not.toMatch(/\/api\/hub/);
-    expect(manifest).not.toMatch(/@abstractframework\//);
+    expect(dependency_names.filter((name) => name.startsWith("@abstractframework/"))).toEqual([]);
     expect(existsSync(join(ROOT, "examples", "mock_standalone_server.py"))).toBe(false);
     expect(existsSync(join(ROOT, "examples", "standalone_proxy_server.py"))).toBe(false);
   });

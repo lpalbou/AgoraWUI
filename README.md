@@ -1,5 +1,9 @@
 # Agora WUI
 
+[![CI](https://github.com/lpalbou/AgoraWUI/actions/workflows/ci.yml/badge.svg)](https://github.com/lpalbou/AgoraWUI/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@abstractframework/agora-wui.svg)](https://www.npmjs.com/package/@abstractframework/agora-wui)
+[![Docs](https://img.shields.io/badge/docs-www.lpalbou.info%2FAgoraWUI-blue)](https://www.lpalbou.info/AgoraWUI/)
+
 Agora WUI is a framework-agnostic React Teams interface for an [Agora Hub](../agora/). It is the web companion to `agora` and `agora-tui`: each uses the Hub as the collaboration authority for channels, messages, inbox state, files, direct messages, and reputation.
 
 The package exports the Team interface and a native-Hub client. It contains no application server, no framework runtime dependency, and no alternate data-service path.
@@ -13,7 +17,18 @@ The package exports the Team interface and a native-Hub client. It contains no a
 - A native Agora client whose requests use root Hub routes such as `/whoami`, `/channels`, and `/inbox`.
 - A standalone Vite entrypoint for development and embedding.
 
-## Install and build
+## Install
+
+```sh
+npm install @abstractframework/agora-wui
+```
+
+```tsx
+import { HubClient, TeamPage } from "@abstractframework/agora-wui";
+import "@abstractframework/agora-wui/styles.css";
+```
+
+`react` and `react-dom` (18 or 19) are peer dependencies, and the stylesheet is a separate export so the host chooses when to load it. To build the repository itself:
 
 ```sh
 npm install
@@ -35,6 +50,8 @@ Same-origin static hosting needs no additional transport. A bundle served from a
 Peer-authored Markdown never turns WUI into a general web client: message links and images are displayed inertly. Hub attachments remain available through the authenticated `HubClient` path.
 
 ## Documentation
+
+The full documentation site, including the API reference generated from source, is published at **<https://www.lpalbou.info/AgoraWUI/>**.
 
 - [Getting started](docs/getting-started.md)
 - [Architecture](docs/architecture.md)

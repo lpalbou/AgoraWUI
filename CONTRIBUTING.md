@@ -29,3 +29,24 @@ npm run smoke
 ## Changes
 
 Keep changes focused, add a regression test for behaviour changes, and update the relevant user-facing documentation and `CHANGELOG.md` in the same change.
+
+## Documentation site
+
+The site at <https://www.lpalbou.info/AgoraWUI/> is built by VitePress from `docs/`. Three parts of it are generated and are not committed:
+
+- `docs/reference/` — TypeDoc output for the public entrypoint (`npm run docs:api`).
+- `docs/changelog.md`, `docs/contributing.md`, `docs/security.md` — mirrors of the root documents (`npm run docs:sync`).
+
+```sh
+npm run docs:dev     # local site with both generators
+npm run docs:build   # what CI publishes
+```
+
+`.github/workflows/docs.yml` rebuilds and deploys the site on every push to `main`.
+
+## Releasing
+
+1. Update `version` in `package.json` and add the matching `## <version> — <date>` section to `CHANGELOG.md`.
+2. Merge to `main` and push the tag `v<version>` (or run the `Release` workflow with the version as input, which creates the tag).
+
+`.github/workflows/release.yml` then verifies that the tag, `package.json` version, and changelog entry agree, builds and tests, publishes `@abstractframework/agora-wui` to npm with provenance, and creates the GitHub Release. Publishing is idempotent: an already-published version is skipped rather than failing.
