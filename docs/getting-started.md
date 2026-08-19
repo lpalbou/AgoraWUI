@@ -21,7 +21,9 @@ npm run build
 
 ## Embed the Team UI
 
-Use the library from a React host. Supply the existing Agora seat key only in memory. The stylesheet is a separate export, so the host chooses when to load it.
+Use the library from a React host. Supply the existing Agora seat key only in memory. The stylesheet is a separate export, so the host chooses when to load it — `styles.css` for the full Agora WUI look, or `team.css` alone when your host provides its own page theme through the shared token names (see [Public API → Stylesheets](api.md#stylesheets)).
+
+A host that fronts the Hub with its own authenticated relay embeds the same page without handling the seat key in the browser: pass a relative `base_url` (your proxy prefix) and a `ws_url` pointing at your relay's socket route — the socket URL is used verbatim, so no token ever rides a URL.
 
 ```tsx
 import { HubClient, TeamPage } from "@abstractframework/agora-wui";

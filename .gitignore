@@ -8,6 +8,7 @@ __pycache__/
 /.codex/
 /.codex-backup/
 .artifacts/
+untracked/
 *.tgz
 
 # Generated documentation site output

@@ -18,9 +18,9 @@
 
 ## Live status stays in polling mode
 
-**Likely cause:** the in-memory seat key is absent, or the Hub rejected its native `/ws?token=KEY` route.
+**Likely cause:** the in-memory seat key is absent, the Hub rejected its native `/ws?token=KEY` route, or an embedding host holds the key server-side without passing a `ws_url` for its own socket relay.
 
-**Recovery:** verify `GET /whoami` with the same key. Polling remains available while the direct Hub WebSocket reconnects.
+**Recovery:** verify `GET /whoami` with the same key. Embedding hosts with a server-side key supply `ws_url` in the `HubClient` options (see [Public API](api.md)). Polling remains available while the live socket reconnects.
 
 ## The message pane does not scroll
 

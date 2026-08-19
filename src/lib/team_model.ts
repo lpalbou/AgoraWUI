@@ -398,6 +398,57 @@ export function replied_ids(messages: Array<{ id?: string; sender?: string; repl
 const FS_PATH_RE = /(?:^|[\s("'`])((?:[A-Za-z0-9_][A-Za-z0-9_.-]*\/)+[A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:md|markdown|txt|json|yaml|yml|csv|log))\b/g;
 const FS_PATH_CAP = 4;
 
+/** Explicit @-references into a channel's virtual file system (vfs):
+ *  `@folder/file` (the message's own channel) or `@channel:folder/file`
+ *  (another channel's vfs — the reader's seat still needs read access;
+ *  the hub authorizes). Disambiguation from seat mentions is NOT purely
+ *  syntactic: the hub rules by seat-identity precedence (a token matching
+ *  a registered seat id is a mention even written `@seat/...` or
+ *  `@seat:...`), and `filter_vfs_refs` below applies the same ruling
+ *  against the roster this client can see. Surviving refs chip — unlike
+ *  bare prose paths (dm 93), the @ IS the author's declared intent, and
+ *  a missing target surfaces as the viewer's named error, not a dead
+ *  button. */
+const VFS_REF_RE = /(?:^|[\s("'`])@(?:([a-z0-9][a-z0-9_-]{0,63}):)?((?:[A-Za-z0-9_][A-Za-z0-9_.-]*\/)*[A-Za-z0-9_][A-Za-z0-9_.-]*\.[A-Za-z0-9]{1,8})\b/g;
+const VFS_REF_CAP = 8;
+
+export type VfsRef = { channel?: string; path: string };
+
+export function extract_vfs_refs(text: string): VfsRef[] {
+  const out: VfsRef[] = [];
+  for (const m of String(text || "").matchAll(VFS_REF_RE)) {
+    const channel = m[1] || undefined;
+    const path = m[2];
+    // The in-channel form requires a directory segment — a bare `@name.md`
+    // is indistinguishable from an @seat typo, so it stays prose. The
+    // channel-qualified form is unambiguous with or without a folder.
+    if (!channel && !path.includes("/")) continue;
+    if (!out.some((r) => r.channel === channel && r.path === path)) out.push({ channel, path });
+    if (out.length >= VFS_REF_CAP) break;
+  }
+  return out;
+}
+
+/** Seat-identity precedence (operator ruling 2026-08-19: "always check
+ *  exact match with user first, then with files"): a token that exactly
+ *  matches a known seat id is a MENTION, never a vfs reference — for the
+ *  channel-qualified form when the qualifier is a seat, and for the
+ *  in-channel form when the first path segment is a seat (the hub's
+ *  mention parser sees exactly that first segment as its candidate).
+ *  Practical consequence, documented in the protocol: a channel whose
+ *  name collides with a seat id cannot be @-referenced cross-channel. */
+export function filter_vfs_refs(refs: VfsRef[], seat_ids: Iterable<string>): VfsRef[] {
+  // Case-insensitive: the hub lowercases mention candidates, so `@Plans/x.md`
+  // with seat `plans` is a mention there — match that here (verifier P2).
+  const seats = new Set<string>();
+  for (const id of seat_ids) seats.add(String(id).toLowerCase());
+  return refs.filter((ref) => {
+    if (ref.channel) return !seats.has(ref.channel.toLowerCase());
+    const first = ref.path.split("/", 1)[0].toLowerCase();
+    return !seats.has(first);
+  });
+}
+
 export function extract_fs_paths(text: string): string[] {
   const out: string[] = [];
   for (const m of String(text || "").matchAll(FS_PATH_RE)) {

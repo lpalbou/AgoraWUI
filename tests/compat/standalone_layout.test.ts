@@ -3,7 +3,11 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const styles = readFileSync(resolve(import.meta.dirname, "../../src/ui/styles.css"), "utf8");
+// The stylesheet ships as two layers (theme tokens/elements + class-scoped
+// team rules) composed by styles.css; the contract spans their union.
+const styles =
+  readFileSync(resolve(import.meta.dirname, "../../src/ui/theme.css"), "utf8") +
+  readFileSync(resolve(import.meta.dirname, "../../src/ui/team.css"), "utf8");
 
 describe("standalone Team layout", () => {
   it("gives TeamPage a bounded flex parent so the message pane can scroll", () => {

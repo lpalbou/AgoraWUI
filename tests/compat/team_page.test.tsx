@@ -113,6 +113,9 @@ function stub_hub(opts: StubOpts = {}): ReturnType<typeof vi.fn> {
       return new Response(JSON.stringify(opts.files ?? []), { status: 200 });
     }
     if (url.match(/\/channels\/[^/]+\/fs\//)) {
+      if (String(init?.method || "GET") === "DELETE") {
+        return new Response(JSON.stringify({ deleted: true }), { status: 200 });
+      }
       return new Response(JSON.stringify({ path: "plans/x.md", content: "# Plan\n\nhello **world**", mime: "text/markdown", version: 2, updated_by: "flow", updated_at: 1 }), { status: 200 });
     }
     if (url.endsWith("/channels")) {
@@ -548,6 +551,40 @@ describe("TeamPage trust affordances", () => {
     expect(screen.getAllByText("answered")).toHaveLength(1);
   });
 
+  it("vfs delete: the trash arms an IN-APP confirm naming the agent risk; confirm sends the CAS DELETE (operator ask 2026-08-19)", async () => {
+    const fetch_mock = stub_hub({ files: [{ path: "notes.md", version: 3, updated_by: "flow", updated_at: 1, size: 12 }] });
+    render_page();
+    await screen.findAllByText("#commons");
+    fireEvent.click(screen.getByRole("button", { name: "Open channel files drawer" }));
+    await screen.findByText("notes.md");
+    const del_calls = () =>
+      fetch_mock.mock.calls.filter((c) => String(c[1]?.method || "GET") === "DELETE" && String(c[0]).includes("/fs/")).length;
+    fireEvent.click(screen.getByRole("button", { name: "Delete notes.md" }));
+    // Arming is not deleting: the modal explains the blast radius first.
+    await screen.findByText("Delete file?");
+    expect(screen.getByText(/Agents may already rely on it/)).toBeTruthy();
+    expect(del_calls()).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
+    await waitFor(() => expect(del_calls()).toBe(1));
+    // The delete is fenced on the version the user was LOOKING at.
+    const call = fetch_mock.mock.calls.find((c) => String(c[1]?.method || "") === "DELETE")!;
+    expect(String(call[0])).toContain("/channels/commons/fs/notes.md?expect_version=3");
+    await waitFor(() => expect(screen.queryByText("Delete file?")).toBeNull());
+  });
+
+  it("vfs delete cancel leaves the file untouched", async () => {
+    const fetch_mock = stub_hub({ files: [{ path: "notes.md", version: 3, updated_by: "flow", updated_at: 1, size: 12 }] });
+    render_page();
+    await screen.findAllByText("#commons");
+    fireEvent.click(screen.getByRole("button", { name: "Open channel files drawer" }));
+    await screen.findByText("notes.md");
+    fireEvent.click(screen.getByRole("button", { name: "Delete notes.md" }));
+    await screen.findByText("Delete file?");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByText("Delete file?")).toBeNull());
+    expect(fetch_mock.mock.calls.filter((c) => String(c[1]?.method || "GET") === "DELETE").length).toBe(0);
+  });
+
   it("Members drawer opens on explicit click, fetches fresh /info on EVERY open, and names the missing charter", async () => {
     // Members served consistently with info.members (P1-4: the header
     // count derives from the LIVE members state, not the info snapshot).
@@ -795,7 +832,7 @@ describe("TeamPage moderation (operator dm 12: remove from a channel OR the hub)
     await waitFor(() => expect(unretire_calls().length).toBe(1));
   });
 
-  it("browses the channel virtual filesystem via the Files drawer — Drive-style folders (operator dm 35/53)", async () => {
+  it("browses the channel virtual file system (vfs) via the Files drawer — Drive-style folders (operator dm 35/53)", async () => {
     stub_hub({
       files: [{ path: "plans/x.md", version: 2, updated_by: "flow", updated_at: 1, size: 128, description: "the plan" }],
     });

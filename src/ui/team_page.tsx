@@ -22,8 +22,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { AfChip, ChatComposer, Icon, Markdown } from "./primitives";
-import { HubClient, type HubAttachment, type HubChannel, type HubChannelInfo, type HubFsEntry, type HubHealth, type HubMessage, type HubReputationBoard, type HubReputationVote, type HubSearchHit, type HubSearchReport } from "../lib/hub_client";
+import { HubClient, type HubAttachment, type HubChannel, type HubChannelInfo, type HubFsEntry, type HubFsFile, type HubHealth, type HubMessage, type HubReputationBoard, type HubReputationVote, type HubSearchHit, type HubSearchReport } from "../lib/hub_client";
 import { FileViewer, resolve_file_mode, type FileView } from "./team_file_viewer";
+import { Modal } from "./modal";
 import { MemoMarkdown } from "./memo_markdown";
 import { ErrorBoundary } from "./error_boundary";
 import { verify_ledger, type LedgerVerdict } from "../lib/hub_ledger";
@@ -41,6 +42,8 @@ import {
   autolink_body,
   reflow_prose_walls,
   extract_fs_paths,
+  extract_vfs_refs,
+  filter_vfs_refs,
   filter_threads,
   fs_children,
   group_slug,
@@ -166,6 +169,76 @@ function FileGlyph(): React.ReactElement {
       <path d="M9.2 1.8v3h3" />
     </svg>
   );
+}
+
+/** Hub fs caps, mirrored for early client-side refusals with named reasons
+ *  (the hub still enforces its own — verbatim — on the wire). */
+const MAX_FS_TEXT_BYTES = 256 * 1024;
+const MAX_FS_BINARY_BYTES = 4 * 1024 * 1024;
+const MAX_DROP_FILES = 500;
+
+/** Text sniff for deposits: strict UTF-8 decode with no NULs = a text file
+ *  (sent as fs `content`); anything else ships as base64 bytes. */
+function decode_as_text(bytes: ArrayBuffer): string | null {
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return text.includes("\u0000") ? null : text;
+  } catch {
+    return null;
+  }
+}
+
+function bytes_to_b64(bytes: ArrayBuffer): string {
+  const view = new Uint8Array(bytes);
+  let bin = "";
+  const CHUNK = 0x8000; // avoid call-stack limits on large files
+  for (let i = 0; i < view.length; i += CHUNK) {
+    bin += String.fromCharCode(...view.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+/** Resolve a drop into {rel_path, file} pairs, walking dropped DIRECTORIES
+ *  via the webkitGetAsEntry tree so a folder deposit preserves its shape.
+ *  Bounded by MAX_DROP_FILES — a stray node_modules drop must not fan out
+ *  into thousands of hub writes. */
+async function collect_dropped_files(dt: DataTransfer): Promise<{ files: Array<{ rel_path: string; file: File }>; truncated: boolean }> {
+  const out: Array<{ rel_path: string; file: File }> = [];
+  let truncated = false;
+  const entries = Array.from(dt.items || [])
+    .map((item) => (typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null))
+    .filter(Boolean) as FileSystemEntry[];
+  if (!entries.length) {
+    const flat = Array.from(dt.files || []);
+    for (const file of flat.slice(0, MAX_DROP_FILES)) out.push({ rel_path: file.name, file });
+    return { files: out, truncated: flat.length > MAX_DROP_FILES };
+  }
+  async function walk(entry: FileSystemEntry, prefix: string): Promise<void> {
+    if (out.length >= MAX_DROP_FILES) {
+      // Stop walking instead of counting the remainder — a stray
+      // node_modules drop must not cost a full tree traversal just to
+      // report an exact skipped-count.
+      truncated = true;
+      return;
+    }
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) => (entry as FileSystemFileEntry).file(resolve, reject));
+      out.push({ rel_path: prefix ? `${prefix}/${entry.name}` : entry.name, file });
+      return;
+    }
+    if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      // readEntries serves batches; keep reading until an empty batch.
+      for (;;) {
+        const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
+        if (!batch.length) break;
+        for (const child of batch) await walk(child, prefix ? `${prefix}/${entry.name}` : entry.name);
+        if (truncated) break;
+      }
+    }
+  }
+  for (const entry of entries) await walk(entry, "");
+  return { files: out.slice(0, MAX_DROP_FILES), truncated };
 }
 
 function clamp_preview(text: string): string {
@@ -561,6 +634,33 @@ export function TeamPage(props: {
   const [delegation_busy, set_delegation_busy] = useState(false);
   const [delegate_pick, set_delegate_pick] = useState("");
   const [delegate_powers, set_delegate_powers] = useState<string[]>([]);
+  /** Hub-wide standing missions for the Members roster. A refusal (the hub
+   *  gates the LIST to operator seats) leaves the map null — rows simply
+   *  show no mission line; the editor still offers, and the hub's refusal
+   *  of the write renders verbatim. */
+  function load_missions(): void {
+    hub
+      .missions()
+      .then((rows) => set_missions_map(Object.fromEntries(rows.map((r) => [String(r.agent_id || ""), String(r.mission || "")]))))
+      .catch(() => set_missions_map(null));
+  }
+
+  /** Set one agent's standing mission (PUT /admin/agents/{id}/mission). */
+  async function save_mission(agent_id: string): Promise<void> {
+    set_mission_busy(true);
+    set_mission_error("");
+    try {
+      const mission = mission_draft.trim();
+      await hub.set_mission(agent_id, mission);
+      set_missions_map((cur) => ({ ...(cur || {}), [agent_id]: mission }));
+      set_mission_edit("");
+    } catch (e: any) {
+      set_mission_error(String(e?.message || e || "mission update failed"));
+    } finally {
+      set_mission_busy(false);
+    }
+  }
+
   function load_delegations(): void {
     hub
       .delegations()
@@ -657,12 +757,43 @@ export function TeamPage(props: {
   // category-opinion casting (which manages its own board state); nothing
   // renders a per-author stance in the roster anymore.
 
-  // Channel virtual-filesystem browser (operator dm 35/53) + shared file
+  // Channel virtual file system (vfs) browser (operator dm 35/53) + shared file
   // viewer (also used by attachment previews). fs list is per-channel;
   // fs_cwd is the Drive-style folder position inside the flat namespace.
   const [files, set_files] = useState<HubFsEntry[] | null>(null);
   const [files_error, set_files_error] = useState("");
   const [fs_cwd, set_fs_cwd] = useState("");
+  // New-file flow (operator ask 2026-08-19): path input in the Files drawer,
+  // then the shared editor; the write is create-only (expect_version 0).
+  const [show_new_fs, set_show_new_fs] = useState(false);
+  const [new_fs_path, set_new_fs_path] = useState("");
+  // One transient toast (operator ask 2026-08-19: cap warnings must be
+  // impossible to miss). One slot, newest wins, self-clears.
+  const [toast, set_toast] = useState("");
+  const toast_timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function show_toast(text: string): void {
+    set_toast(text);
+    if (toast_timer.current) clearTimeout(toast_timer.current);
+    toast_timer.current = setTimeout(() => set_toast(""), 6000);
+  }
+  // Deposit queue (operator ask 2026-08-19): drag & drop into the Files
+  // drawer writes through the hub's versioned fs PUT — text as `content`,
+  // binary as `content_b64` (hubs without the binary upgrade refuse it,
+  // verbatim). Each row tracks its own outcome; "exists" offers Replace.
+  const [fs_uploads, set_fs_uploads] = useState<Array<{ path: string; size: number; state: "busy" | "done" | "exists" | "error"; error?: string; file?: File }>>([]);
+  // Armed vfs deletion (operator ask 2026-08-19): an IN-APP confirm modal —
+  // deletion is channel-visible state agents may already rely on, so it
+  // never rides a bare click or a browser confirm().
+  const [fs_del, set_fs_del] = useState<{ entry: HubFsEntry; busy: boolean; error: string } | null>(null);
+  const [fs_drop_active, set_fs_drop_active] = useState(false);
+  // Standing missions (operator ask 2026-08-19): hub-wide seat facts served
+  // by /admin/missions. null = not loaded or the hub refused (non-operator);
+  // the editor is still offered — the hub authorizes the WRITE, verbatim.
+  const [missions_map, set_missions_map] = useState<Record<string, string> | null>(null);
+  const [mission_edit, set_mission_edit] = useState("");
+  const [mission_draft, set_mission_draft] = useState("");
+  const [mission_busy, set_mission_busy] = useState(false);
+  const [mission_error, set_mission_error] = useState("");
   const [file_view, set_file_view] = useState<FileView | null>(null);
 
   // Every authenticated attachment preview is a temporary blob URL. Release
@@ -905,6 +1036,11 @@ export function TeamPage(props: {
       void refresh_badges(all);
     } catch (e: any) {
       set_error(String(e?.message || e || "Hub unreachable"));
+      // An auth refusal on /whoami is the missing/invalid-key case — feed
+      // the dedicated banner instead of leaving meta null (which kept the
+      // diagnostic unreachable on every path; adjudication A2).
+      const status = Number(e?.status || 0);
+      if (status === 401 || status === 403) set_meta({ seat: "", seat_key_present: false });
     }
   }
 
@@ -1196,6 +1332,15 @@ export function TeamPage(props: {
     set_files_error("");
     set_fs_cwd("");
     set_file_view(null);
+    set_show_new_fs(false);
+    set_new_fs_path("");
+    // An armed delete names a file in the PREVIOUS channel — disarm it.
+    set_fs_del(null);
+    // Mission editor is per-row UI state; missions themselves are hub-wide
+    // and survive the switch. A draft aimed at one roster must not land on
+    // another channel's row of the same seat mid-edit — close it.
+    set_mission_edit("");
+    set_mission_error("");
     // Roster/blocks are per-channel: a stale flash could aim a moderation
     // click at the WRONG channel's context (adversary find).
     set_members(null);
@@ -1603,6 +1748,9 @@ export function TeamPage(props: {
       member_note_seq.current = max_seq;
       load_info();
       load_delegations(); // hub-wide delegate list rides the Members open
+      load_missions(); // standing missions ride the Members open (operator)
+      set_mission_edit("");
+      set_mission_error("");
     }
     if (next === "leaderboard") load_leaderboard(board_scope);
     if (next === "desk") void load_desk();
@@ -1794,7 +1942,7 @@ export function TeamPage(props: {
     }
   }
 
-  /** Load the channel's virtual filesystem into the Files drawer —
+  /** Load the channel's vfs into the Files drawer —
    *  generation-guarded like the other async loads so a stale channel's
    *  listing never lands. */
   function load_files(): void {
@@ -1813,7 +1961,17 @@ export function TeamPage(props: {
   }
 
 
-  /** Open one virtual-filesystem file in the shared viewer (md rendered).
+  /** A viewer state for a BINARY fs entry (hubs with binary-fs support):
+   *  decoded to a temporary blob URL — raster mimes preview inline, the
+   *  rest offer the download link. Never editable inline. */
+  function fs_binary_view(name: string, f: HubFsFile, meta: string | undefined, channel: string): FileView {
+    const bytes = Uint8Array.from(atob(f.content_b64 || ""), (c) => c.charCodeAt(0));
+    const mime = f.mime || "application/octet-stream";
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    return { name, mode: INLINE_IMAGE_TYPES.has(mime) ? "image" : "download", url, content_type: mime, size: bytes.length, meta, loading: false, version: f.version, editable: false, channel };
+  }
+
+  /** Open one vfs file in the shared viewer (md rendered).
    *  Generation-guarded (security adversary P2: a slow read started in
    *  channel X must not pop channel Y's modal after a switch). */
   async function open_fs_file(entry: HubFsEntry): Promise<void> {
@@ -1824,14 +1982,121 @@ export function TeamPage(props: {
     try {
       const f = await hub.fs_read(selected, entry.path);
       if (gen !== chan_gen.current) return; // switched away — drop
+      if (f.encoding === "base64" && typeof f.content_b64 === "string") {
+        set_file_view(fs_binary_view(entry.path, f, meta, selected));
+        return;
+      }
       const resolved = resolve_file_mode(entry.path, f.mime);
       // fs files are text; an "image" resolution has no bytes URL here, so
       // render whatever text content came back.
-      set_file_view({ name: entry.path, mode: resolved === "image" ? "text" : resolved, text: clamp_preview(f.content), content_type: f.mime, meta, loading: false });
+      // Editable only when the FULL content is in hand — a clamped oversize
+      // preview round-tripped through an editor would truncate the file.
+      const editable = f.content.length <= MAX_PREVIEW_BYTES;
+      set_file_view({ name: entry.path, mode: resolved === "image" ? "text" : resolved, text: clamp_preview(f.content), content_type: f.mime, meta, loading: false, version: f.version, editable, channel: selected });
     } catch (e: any) {
       if (gen !== chan_gen.current) return;
       set_file_view({ name: entry.path, mode: "text", meta, error: String(e?.message || e || "failed to read file") });
     }
+  }
+
+  /** Deposit one dropped/picked file into the channel fs at `path`.
+   *  Text (strict UTF-8, no NULs) goes as `content`; anything else as
+   *  `content_b64` per the binary-fs wire contract. First attempt is
+   *  create-only (expect_version 0); `replace` retries unconditionally
+   *  after the user's explicit click. Caps are pre-checked with named
+   *  reasons; everything else is the hub's own refusal, verbatim. */
+  async function deposit_file(path: string, file: File, opts?: { replace?: boolean }): Promise<void> {
+    const update = (patch: Partial<{ state: "busy" | "done" | "exists" | "error"; error: string }>) =>
+      set_fs_uploads((cur) => cur.map((u) => (u.path === path ? { ...u, ...patch } : u)));
+    update({ state: "busy", error: "" });
+    try {
+      const bytes = await file.arrayBuffer();
+      const text = decode_as_text(bytes);
+      if (text !== null && bytes.byteLength > MAX_FS_TEXT_BYTES) {
+        update({ state: "error", error: `exceeds the hub's ${human_size(MAX_FS_TEXT_BYTES)} text-file cap` });
+        return;
+      }
+      if (text === null && bytes.byteLength > MAX_FS_BINARY_BYTES) {
+        update({ state: "error", error: `exceeds the ${human_size(MAX_FS_BINARY_BYTES)} binary cap — attach it to a message instead` });
+        return;
+      }
+      const body = text !== null
+        ? { content: text, mime: file.type && file.type.startsWith("text/") ? file.type : undefined }
+        : { content_b64: bytes_to_b64(bytes), mime: file.type || "application/octet-stream" };
+      await hub.fs_put(selected, path, { ...body, expect_version: opts?.replace ? undefined : 0 });
+      update({ state: "done" });
+      load_files();
+    } catch (e: any) {
+      const msg = String(e?.message || e || "deposit failed");
+      const status = Number(e?.status || 0);
+      if (status === 409 || /version|exist/i.test(msg)) {
+        update({ state: "exists", error: msg });
+      } else if (status === 422 || (/must be text|content.*required/i.test(msg) && !/charter/i.test(msg))) {
+        // "charter must be text" is a policy refusal on upgraded hubs, not
+        // a missing-capability signal (verifier P2) — it stays verbatim-only.
+        update({ state: "error", error: `${msg} — this hub build doesn't accept binary fs files yet` });
+      } else {
+        update({ state: "error", error: msg });
+      }
+    }
+  }
+
+  /** Handle a drop on the Files drawer: resolve files (walking dropped
+   *  folders), seed the queue, and deposit into the CURRENT folder. */
+  async function deposit_drop(dt: DataTransfer): Promise<void> {
+    const { files: dropped, truncated } = await collect_dropped_files(dt);
+    if (truncated) show_toast(`Deposit capped at ${MAX_DROP_FILES} files — the rest of the drop was skipped.`);
+    if (!dropped.length) return;
+    const base = fs_cwd ? `${fs_cwd}/` : "";
+    const rows = dropped.map(({ rel_path, file }) => ({ path: `${base}${rel_path}`, size: file.size, state: "busy" as const, file }));
+    set_fs_uploads((cur) => [...cur.filter((u) => !rows.some((r) => r.path === u.path)), ...rows]);
+    for (const { rel_path, file } of dropped) {
+      await deposit_file(`${base}${rel_path}`, file);
+    }
+  }
+
+  /** Confirmed vfs deletion. The delete carries the LISTING's version as
+   *  expect_version, so an agent rewrite since the user looked surfaces as
+   *  the hub's own conflict instead of silently removing newer content.
+   *  The hub tombstones (version stays monotonic) and posts an audit
+   *  notice; per-channel `fs_remove` gates refuse verbatim. */
+  async function delete_fs_file(): Promise<void> {
+    const armed = fs_del;
+    if (!armed || armed.busy) return;
+    set_fs_del({ ...armed, busy: true, error: "" });
+    try {
+      const r = await hub.fs_delete(selected, armed.entry.path, armed.entry.version);
+      set_fs_del(null);
+      show_toast(r.deleted ? `Deleted ${armed.entry.path} (was v${armed.entry.version})` : `${armed.entry.path} was already gone.`);
+      if (file_view?.name === armed.entry.path && (file_view.channel ?? selected) === selected) set_file_view(null);
+      load_files();
+    } catch (e: any) {
+      set_fs_del((cur) => (cur ? { ...cur, busy: false, error: String(e?.message || e || "delete failed") } : cur));
+    }
+  }
+
+  /** Save the file currently open in the viewer back to the channel fs.
+   *  Only fs-sourced views are editable (attachments never set `editable`).
+   *  The write carries the read-time version as expect_version, so a
+   *  concurrent agent write comes back as the hub's own 409 — the operator
+   *  merges by hand, nothing is silently overwritten. On success the view
+   *  refreshes from a re-read and the Files drawer re-lists. */
+  async function save_fs_file(text: string): Promise<void> {
+    const v = file_view;
+    if (!v || !v.editable) throw new Error("this view is not editable");
+    const gen = chan_gen.current;
+    const vfs_channel = v.channel || selected;
+    await hub.fs_put(vfs_channel, v.name, {
+      content: text,
+      expect_version: v.version ?? undefined,
+      mime: v.content_type || "text/markdown",
+    });
+    const f = await hub.fs_read(vfs_channel, v.name);
+    if (gen !== chan_gen.current) return; // switched away — write landed, drop the view refresh
+    const resolved = resolve_file_mode(v.name, f.mime);
+    const meta = f.updated_by ? `${f.updated_by} · ${abs_time(f.updated_at)} · v${f.version ?? "?"}` : undefined;
+    set_file_view({ name: v.name, mode: resolved === "image" ? "text" : resolved, text: clamp_preview(f.content), content_type: f.mime, meta, loading: false, version: f.version, editable: f.content.length <= MAX_PREVIEW_BYTES, channel: vfs_channel });
+    if (drawer === "files") load_files();
   }
 
   /** Open a channel-fs PATH mentioned in a message (operator dm 69: the
@@ -2002,16 +2267,22 @@ export function TeamPage(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, selected]);
 
-  async function open_fs_path(path: string): Promise<void> {
+  async function open_fs_path(path: string, from_channel?: string): Promise<void> {
     const gen = chan_gen.current;
+    const vfs_channel = from_channel || selected;
     const mode0 = resolve_file_mode(path, "text/markdown");
-    set_file_view({ name: path, mode: mode0 === "image" ? "text" : mode0, loading: true });
+    set_file_view({ name: path, mode: mode0 === "image" ? "text" : mode0, loading: true, channel: vfs_channel });
     try {
-      const f = await hub.fs_read(selected, path);
+      const f = await hub.fs_read(vfs_channel, path);
       if (gen !== chan_gen.current) return;
-      const resolved = resolve_file_mode(path, f.mime);
       const meta = f.updated_by ? `${f.updated_by} · ${abs_time(f.updated_at)} · v${f.version ?? "?"}` : undefined;
-      set_file_view({ name: path, mode: resolved === "image" ? "text" : resolved, text: clamp_preview(f.content), content_type: f.mime, meta, loading: false });
+      if (f.encoding === "base64" && typeof f.content_b64 === "string") {
+        set_file_view(fs_binary_view(path, f, meta, vfs_channel));
+        return;
+      }
+      const resolved = resolve_file_mode(path, f.mime);
+      const editable = f.content.length <= MAX_PREVIEW_BYTES;
+      set_file_view({ name: path, mode: resolved === "image" ? "text" : resolved, text: clamp_preview(f.content), content_type: f.mime, meta, loading: false, version: f.version, editable, channel: vfs_channel });
     } catch (e: any) {
       if (gen !== chan_gen.current) return;
       set_file_view({ name: path, mode: "text", error: String(e?.message || e || "failed to read file") + " — the file may have been rewritten under another path; check the Files drawer" });
@@ -3338,16 +3609,40 @@ export function TeamPage(props: {
               Leaderboard are the one system. */}
         </div>
         {info.meta?.purpose ? <div className="team_info_purpose">{info.meta.purpose}</div> : null}
-        {info.charter ? (
-          <div className="team_info_charter">
-            <div className="muted team_note" style={{ marginBottom: 4 }}>
-              Charter
+        {(() => {
+          // Two wire shapes: older hubs inline the charter TEXT; agora/0.4
+          // hubs serve a descriptor {path, version, updated_by, updated_at}
+          // pointing into the channel fs. Rendering the descriptor through
+          // String() printed "[object Object]" (live review 2026-08-19).
+          const charter = info.charter as unknown;
+          if (!charter) return <div className="muted team_note">No charter set for this channel.</div>;
+          if (typeof charter === "string") {
+            return (
+              <div className="team_info_charter">
+                <div className="muted team_note" style={{ marginBottom: 4 }}>
+                  Charter
+                </div>
+                <Markdown className="md_doc" text={neutralize_unsafe_embeds(charter)} />
+              </div>
+            );
+          }
+          const desc = charter as { path?: unknown; version?: unknown; updated_by?: unknown };
+          const path = typeof desc.path === "string" && desc.path ? desc.path : "channel/charter.md";
+          return (
+            <div className="team_info_charter">
+              <button
+                className="team_row_expand"
+                onClick={() => void open_fs_path(path)}
+                title={`Open ${path} from this channel's virtual file system (vfs)`}
+              >
+                Read charter{typeof desc.version === "number" ? ` (v${desc.version})` : ""}
+              </button>
+              {typeof desc.updated_by === "string" && desc.updated_by ? (
+                <span className="muted team_note"> — updated by {desc.updated_by}</span>
+              ) : null}
             </div>
-            <Markdown className="md_doc" text={neutralize_unsafe_embeds(String(info.charter))} />
-          </div>
-        ) : (
-          <div className="muted team_note">No charter set for this channel.</div>
-        )}
+          );
+        })()}
         {/* Members + moderation (operator c2240): the HUB is the authority —
             refusals render verbatim. Moderation and lifecycle hide in dm
             channels (owner-less by hub construction — every act refuses). */}
@@ -3421,8 +3716,10 @@ export function TeamPage(props: {
             members.map((m) => {
               const id = String(m.agent_id || "");
               if (!id) return null;
+              const mission = missions_map?.[id] || "";
               return (
-                <div className="team_member_row" key={id}>
+                <React.Fragment key={id}>
+                <div className="team_member_row">
                   <span className="team_avatar" style={avatar_style(id)} aria-hidden="true">
                     {(id[0] || "?").toUpperCase()}
                   </span>
@@ -3434,8 +3731,21 @@ export function TeamPage(props: {
                       members tab." Reputation flows from message ratings
                       (general) + the Leaderboard's category opinions; the
                       members tab is roster + moderation only now. */}
+                  <span className="team_member_actions">
+                    <button
+                      className="team_row_expand"
+                      disabled={mission_busy}
+                      title={mission ? `Standing mission: ${mission}\n\nEdit it — hub-wide, rides the seat's whoami (the hub authorizes: operator)` : "Give this agent a standing mission — hub-wide, rides the seat's whoami (the hub authorizes: operator)"}
+                      onClick={() => {
+                        set_mission_edit(mission_edit === id ? "" : id);
+                        set_mission_draft(mission);
+                        set_mission_error("");
+                      }}
+                    >
+                      mission
+                    </button>
                   {id !== seat && !is_dm_channel ? (
-                    <span className="team_member_actions">
+                    <>
                       <button
                         className="team_row_expand"
                         disabled={Boolean(mod_busy)}
@@ -3489,13 +3799,45 @@ export function TeamPage(props: {
                       >
                         {mod_busy === `retire:${id}` ? "retiring…" : mod_nudge === `retire:${id}` ? "confirm retire" : "retire"}
                       </button>
-                    </span>
-                  ) : id === seat ? (
-                    <span className="chip mono ok" style={{ marginLeft: "auto" }}>
+                    </>
+                  ) : null}
+                  {id === seat ? (
+                    <span className="chip mono ok">
                       you
                     </span>
                   ) : null}
+                  </span>
                 </div>
+                {/* Standing mission line: a roster is identity, and for an
+                    agent fleet the mission IS identity (operator ask
+                    2026-08-19). Hidden while its editor is open. */}
+                {mission && mission_edit !== id ? (
+                  <div className="team_member_mission" title={mission}>
+                    {mission}
+                  </div>
+                ) : null}
+                {mission_edit === id ? (
+                  <div className="team_mission_editor">
+                    <textarea
+                      value={mission_draft}
+                      onChange={(e) => set_mission_draft(e.target.value)}
+                      placeholder={`Standing mission for ${id} — the goal this seat pursues across wakes (empty clears it)`}
+                      disabled={mission_busy}
+                      aria-label={`Mission for ${id}`}
+                    />
+                    {mission_error ? <div className="page_error mono">{mission_error}</div> : null}
+                    <div className="team_mission_editor_row">
+                      <span className="muted team_note">Hub-wide — rides the seat's whoami on every wake.</span>
+                      <button className="btn" disabled={mission_busy} onClick={() => { set_mission_edit(""); set_mission_error(""); }}>
+                        Cancel
+                      </button>
+                      <button className="btn primary" disabled={mission_busy} onClick={() => void save_mission(id)}>
+                        {mission_busy ? "Saving…" : "Set mission"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                </React.Fragment>
               );
             })
           )}
@@ -3993,9 +4335,36 @@ export function TeamPage(props: {
               // DIFFERENT spelling onto the file.
               .filter((r) => !(r.res!.kind === "attachment" && String(msg_atts[r.res!.attachment_index]?.filename || "") === r.mention));
             const work_ids = props.on_open_board ? extract_work_ids(`${String(m.title || "")}\n${body}`) : [];
-            if (!resolved.length && !work_ids.length) return null;
+            // Explicit @vfs references (operator ask 2026-08-19): the @ is
+            // declared intent, so these chip unconditionally — an absent
+            // target opens the viewer's named error. Seat identity wins
+            // over files (operator ruling): a token matching a known seat
+            // stays a mention, so no chip. Deduped against the resolved
+            // prose-path chips above.
+            // The roster excludes the viewer's own seat, but seat precedence
+            // must cover it too (verifier P1: `@<own-seat>/x.md` chipped
+            // while the hub obliged the viewer) — add `seat` explicitly.
+            const vfs_refs = filter_vfs_refs(extract_vfs_refs(`${String(m.title || "")}\n${body}`), [...roster, seat])
+              .filter((ref) => ref.channel || !resolved.some((r) => r.res!.kind === "fs" && r.res!.path === ref.path));
+            if (!resolved.length && !work_ids.length && !vfs_refs.length) return null;
             return (
               <div className="team_fs_chips">
+                {vfs_refs.map((ref) => (
+                  <button
+                    key={`vfs:${ref.channel || ""}:${ref.path}`}
+                    className="team_attach_chip team_fs_chip"
+                    title={ref.channel
+                      ? `Open ${ref.path} from #${ref.channel}'s virtual file system (your seat needs read access there — the hub authorizes)`
+                      : `Open ${ref.path} from #${m.channel}'s virtual file system`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void open_fs_path(ref.path, ref.channel || m.channel);
+                    }}
+                  >
+                    <FileGlyph />
+                    <span className="team_attach_name mono">@{ref.channel ? `${ref.channel}:` : ""}{ref.path}</span>
+                  </button>
+                ))}
                 {resolved.map(({ mention, res }) => (
                   <button
                     key={mention}
@@ -4004,7 +4373,7 @@ export function TeamPage(props: {
                       res!.kind === "fs"
                         ? res!.rewritten
                           ? `Opens ${res!.path} (the mention's path moved — matched by name in #${selected}'s files)`
-                          : `Open ${res!.path} from #${selected}'s virtual filesystem`
+                          : `Open ${res!.path} from #${selected}'s virtual file system (vfs)`
                         : `Opens the file attached to this message (the path in the text belongs to the sender's workspace)`
                     }
                     onClick={(e) => {
@@ -4053,12 +4422,19 @@ export function TeamPage(props: {
           {props.on_speak_message ? (
             <button
               className={`btn btn_icon ${speaking_message_id === m.id ? "team_speak_on" : ""}`}
-              aria-label={speaking_message_id === m.id ? "Speaking message" : "Speak message"}
-              title={speaking_message_id === m.id ? "Reading this message through the host-provided speech capability" : "Read this message aloud through the host-provided speech capability"}
-              disabled={speaking_message_id === m.id}
+              aria-label={speaking_message_id === m.id ? "Stop speaking" : "Speak message"}
+              title={speaking_message_id === m.id ? "Stop reading this message" : "Read this message aloud through the host-provided speech capability"}
               onClick={(e) => {
                 e.stopPropagation();
-                speak_message(m);
+                // Click-to-stop (adjudication A3): the active button was
+                // DISABLED, leaving the operator no way to stop playback.
+                if (speaking_message_id === m.id) {
+                  speak_abort_ref.current?.abort();
+                  speak_abort_ref.current = null;
+                  set_speaking_message_id("");
+                } else {
+                  speak_message(m);
+                }
               }}
             >
               <Icon name="speaker" size={15} />
@@ -5328,11 +5704,47 @@ export function TeamPage(props: {
               <span className="pane_title">Files</span>
               <span className="pane_count">#{selected}</span>
               <span className="pane_header_actions">
+                <button
+                  className="btn"
+                  onClick={() => {
+                    set_show_new_fs((open) => !open);
+                    set_new_fs_path(fs_cwd ? `${fs_cwd}/` : "");
+                  }}
+                  title="Create a file in this channel's virtual file system (vfs; the hub authorizes the write — e.g. channel/ is owner+operator). Folders are paths: name the file folder/name.md and the folder exists."
+                >
+                  New file
+                </button>
                 <button className="btn btn_icon" onClick={() => set_drawer("")} title="Close">
                   ✕
                 </button>
               </span>
             </div>
+            {show_new_fs ? (
+              <form
+                className="team_fs_newfile"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const path = new_fs_path.trim().replace(/^\/+|\/+$/g, "");
+                  if (!path) return;
+                  set_show_new_fs(false);
+                  // Open the shared editor on an empty draft. version 0 makes
+                  // the save a CREATE-ONLY write (hub expect_version=0), so
+                  // an existing path comes back as the hub's own conflict.
+                  set_file_view({ name: path, mode: resolve_file_mode(path, "text/markdown") === "md" ? "md" : "text", text: "", editable: true, version: 0, start_editing: true, meta: "new file — saved on first Save" });
+                }}
+              >
+                <input
+                  value={new_fs_path}
+                  onChange={(e) => set_new_fs_path(e.target.value)}
+                  placeholder="path/name.md"
+                  aria-label="New file path"
+                  autoFocus
+                />
+                <button className="btn primary" type="submit" disabled={!new_fs_path.trim()}>
+                  Create
+                </button>
+              </form>
+            ) : null}
             {/* Drive-style navigation (dm 53): breadcrumbs + folders derived
                 from the flat hub path namespace. */}
             <div className="team_fs_crumbs">
@@ -5353,7 +5765,49 @@ export function TeamPage(props: {
                   })
                 : null}
             </div>
-            <div className="pane_body pane_body_list">
+            <div
+              className={`pane_body pane_body_list team_fs_dropzone ${fs_drop_active ? "drop_active" : ""}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                set_fs_drop_active(true);
+              }}
+              onDragLeave={(e) => {
+                if (e.currentTarget === e.target) set_fs_drop_active(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                set_fs_drop_active(false);
+                void deposit_drop(e.dataTransfer);
+              }}
+            >
+              {fs_uploads.length ? (
+                <div className="team_fs_uploads">
+                  <div className="team_fs_uploads_head">
+                    <span className="muted team_note">Deposits</span>
+                    <button className="team_row_expand" onClick={() => set_fs_uploads([])}>
+                      clear
+                    </button>
+                  </div>
+                  {fs_uploads.map((u) => (
+                    <div className={`team_fs_upload ${u.state}`} key={u.path}>
+                      <span className="team_fs_upload_path mono" title={u.path}>{u.path}</span>
+                      <span className="team_fs_upload_size muted">{human_size(u.size)}</span>
+                      {u.state === "busy" ? <span className="muted team_note">writing…</span> : null}
+                      {u.state === "done" ? <span className="team_fs_upload_ok">✓</span> : null}
+                      {u.state === "exists" && u.file ? (
+                        <button
+                          className="team_row_expand"
+                          title={`${u.error || "path already exists"} — replace overwrites the head; every version stays in the file's history`}
+                          onClick={() => void deposit_file(u.path, u.file!, { replace: true })}
+                        >
+                          exists — replace?
+                        </button>
+                      ) : null}
+                      {u.state === "error" ? <span className="page_error mono team_fs_upload_err" title={u.error}>{u.error}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {files === null && !files_error ? (
                 <div className="muted team_note">Loading files…</div>
               ) : files_error ? (
@@ -5375,30 +5829,45 @@ export function TeamPage(props: {
                         </button>
                       ))}
                       {leaves.map((f) => (
-                        <button
-                          key={f.path}
-                          className="team_file_row"
-                          onClick={() => void open_fs_file(f)}
-                          title={`${f.updated_by || "?"} · ${abs_time(f.updated_at)} · v${f.version} · ${human_size(f.size)}`}
-                        >
-                          <span className="team_fs_icon">
-                            <FileGlyph />
-                          </span>
-                          <span className="team_file_name_wrap">
-                            <span className="team_file_path">{f.path.slice(fs_cwd ? fs_cwd.length + 1 : 0)}</span>
-                            {f.description ? <span className="team_file_desc muted">{f.description}</span> : null}
-                          </span>
-                          <span className="team_file_meta mono">
-                            {human_size(f.size)} · {ago(f.updated_at)}
-                          </span>
-                        </button>
+                        <div key={f.path} className="team_file_row team_file_row_split">
+                          <button
+                            className="team_file_open"
+                            onClick={() => void open_fs_file(f)}
+                            title={`${f.updated_by || "?"} · ${abs_time(f.updated_at)} · v${f.version} · ${human_size(f.size)}`}
+                          >
+                            <span className="team_fs_icon">
+                              <FileGlyph />
+                            </span>
+                            <span className="team_file_name_wrap">
+                              <span className="team_file_path">{f.path.slice(fs_cwd ? fs_cwd.length + 1 : 0)}</span>
+                              {f.description ? <span className="team_file_desc muted">{f.description}</span> : null}
+                            </span>
+                            <span className="team_file_meta mono">
+                              {human_size(f.size)} · {ago(f.updated_at)}
+                            </span>
+                          </button>
+                          <button
+                            className="btn btn_icon team_file_trash"
+                            aria-label={`Delete ${f.path}`}
+                            title="Delete this file from the channel's vfs (asks to confirm — the hub authorizes and audits)"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              set_fs_del({ entry: f, busy: false, error: "" });
+                            }}
+                          >
+                            <Icon name="trash" size={13} />
+                          </button>
+                        </div>
                       ))}
                     </>
                   );
                 })()
               ) : (
-                <div className="muted team_note">No files in this channel's virtual filesystem yet.</div>
+                <div className="muted team_note">No files in this channel's virtual file system (vfs) yet.</div>
               )}
+              <div className="muted team_note team_fs_drop_hint">
+                Drop files or folders here to deposit them into {fs_cwd ? `${fs_cwd}/` : "the root of"} #{selected} — agents can then cite them by path.
+              </div>
             </div>
           </div>
         ) : null}
@@ -5465,7 +5934,10 @@ export function TeamPage(props: {
                     // count. A hub serving a different category count gets
                     // an inline track override so legend and rows always
                     // share the geometry.
-                    const track_override = unified && cats.length !== 5 ? { gridTemplateColumns: `20px 22px minmax(70px, 1.5fr) minmax(40px, 0.7fr) repeat(${cats.length}, minmax(40px, 0.8fr))` } : undefined;
+                    // Mirror styles.css's minimums (adjudication A4): Total
+                    // ≥56px so scores never clip; unified boards have one
+                    // column fewer, so the budget holds for any cats count.
+                    const track_override = unified ? { gridTemplateColumns: `16px 20px minmax(70px, 1.5fr) minmax(56px, 0.9fr) repeat(${cats.length}, minmax(44px, 0.8fr))` } : undefined;
                     return (
                       <>
                   <div className="team_lb_legend" aria-hidden="true" style={track_override}>
@@ -5749,6 +6221,7 @@ export function TeamPage(props: {
           <div className="pane team_drawer_pane">
             <div className="pane_header">
               <span className="pane_title">Operator desk</span>
+              <span className="pane_count" title="One hub read across every channel and DM — never scoped to the open channel">hub-wide</span>
               <span className="pane_header_actions" style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
                 <button className="btn" onClick={() => void load_desk()} title="Reload">
                   Refresh
@@ -5778,6 +6251,15 @@ export function TeamPage(props: {
                         <div className="team_desk_row_head">
                           <span className={`chip mono ${String(r.kind) === "ask" ? "warn" : ""}`}>{String(r.kind || "ask")}</span>
                           <span className="mono muted">{String(r.who_waits || "?")}</span>
+                          {/* The desk is HUB-WIDE (the /desk route has no
+                              channel scope) — say so per row (operator ask
+                              2026-08-20: without the origin the list read
+                              as maybe-current-channel-only). */}
+                          {r.channel ? (
+                            <span className="mono muted team_desk_row_chan" title={`This item lives in ${String(r.channel)} — the desk gathers everything waiting on you across the whole hub`}>
+                              {String(r.channel).startsWith("dm:") ? `@${dm_peer_of(String(r.channel), seat) || "dm"}` : `#${String(r.channel)}`}
+                            </span>
+                          ) : null}
                           <span className="muted" style={{ marginLeft: "auto" }} title="Waiting since (oldest first)">
                             {age}
                           </span>
@@ -5848,7 +6330,12 @@ export function TeamPage(props: {
             aria-label="Open channel members drawer"
             title="Channel members — roster, moderation, and channel lifecycle"
           >
-            Members
+            {/* Live members state when loaded, else the channel row's count —
+                the tab answers "how many?" before it is ever opened. */}
+            Members{(() => {
+              const n = members ? members.length : channels.find((c) => c.name === selected)?.member_count;
+              return n ? ` (${n})` : "";
+            })()}
           </button>
           <button
             className={`team_drawer_tab ${drawer === "files" ? "active" : ""}`}
@@ -5856,9 +6343,12 @@ export function TeamPage(props: {
             disabled={!selected}
             aria-pressed={drawer === "files"}
             aria-label="Open channel files drawer"
-            title="Channel files — browse this channel's virtual filesystem (/fs)"
+            title="Channel files — browse this channel's virtual file system (vfs)"
           >
-            Files
+            {/* chan_fs_paths rides the existing per-channel listing fetch
+                (chip resolution) — no extra request; null (old hub / error)
+                shows no number rather than a lie. */}
+            Files{chan_fs_paths ? ` (${chan_fs_paths.size})` : ""}
           </button>
           <button
             className={`team_drawer_tab ${drawer === "leaderboard" ? "active" : ""}`}
@@ -5885,8 +6375,10 @@ export function TeamPage(props: {
                 aria-label={waiting ? `Open the operator desk — ${waiting} item(s) wait on you` : "Open the operator desk"}
                 title="Operator desk — everything blocked on YOU, with age (asks addressed to you, queue items, escalations)"
               >
-                Desk
-                {waiting ? <span className="team_desk_tab_badge">{waiting > 99 ? "99+" : waiting}</span> : null}
+                {/* Count rides the label (operator ask 2026-08-20) — the
+                    amber badge doubled it; the green satisfied badge keeps
+                    its distinct meaning (waits you can CLOSE). */}
+                Desk{waiting ? ` (${waiting > 99 ? "99+" : waiting})` : ""}
                 {!waiting && closable ? <span className="team_desk_tab_badge ok" title="Satisfied queue items — waits you can close">{closable > 99 ? "99+" : closable}</span> : null}
               </button>
             );
@@ -5894,7 +6386,47 @@ export function TeamPage(props: {
         </div>
       </div>
 
-      <FileViewer view={file_view} onClose={() => set_file_view(null)} />
+      <FileViewer view={file_view} onClose={() => set_file_view(null)} onSave={save_fs_file} />
+      {fs_del ? (
+        <Modal
+          open={true}
+          title="Delete file?"
+          onClose={() => {
+            if (!fs_del.busy) set_fs_del(null);
+          }}
+          actions={
+            <>
+              <button className="btn" disabled={fs_del.busy} onClick={() => set_fs_del(null)}>
+                Cancel
+              </button>
+              <button className="btn btn_danger" disabled={fs_del.busy} onClick={() => void delete_fs_file()}>
+                {fs_del.busy ? "Deleting…" : "Delete file"}
+              </button>
+            </>
+          }
+        >
+          <p className="team_del_path mono">
+            {fs_del.entry.path}
+            <span className="muted"> — v{fs_del.entry.version} · {human_size(fs_del.entry.size)} · last written by {fs_del.entry.updated_by || "?"}</span>
+          </p>
+          <p>
+            This removes the file from <strong>#{selected}</strong>'s virtual file system (vfs) for everyone.
+            Agents may already rely on it: messages citing the path stop resolving, and any agent
+            working against it will hit a missing file mid-task.
+          </p>
+          <p className="muted team_note">
+            The hub records the deletion as a channel audit notice, and the delete is refused if an
+            agent has rewritten the file since this listing (version fence) or if this channel gates
+            file removal.
+          </p>
+          {fs_del.error ? <div className="page_error mono">{fs_del.error}</div> : null}
+        </Modal>
+      ) : null}
+      {toast ? (
+        <div className="team_toast" role="status" onClick={() => set_toast("")}>
+          {toast}
+        </div>
+      ) : null}
     </div>
   );
 }

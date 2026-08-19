@@ -6,7 +6,7 @@
 /** Sent on every REST request. The Hub uses this to distinguish current
  * clients from pre-handshake clients; it is client identification, never a
  * second authentication scheme. */
-export const AGORA_WUI_CLIENT_HEADER = "agora-wui/0.1.0";
+export const AGORA_WUI_CLIENT_HEADER = "agora-wui/0.2.0";
 
 export type HubMeta = { ok: boolean; hub_url: string; seat: string; seat_key_present: boolean };
 
@@ -52,7 +52,8 @@ export type HubMessageData = {
  *  inline decision within a safe-by-construction element. */
 export type HubAttachment = { id: string; filename: string; content_type: string; size: number };
 
-/** A channel virtual-filesystem entry (fs_list row; operator dm 35). */
+/** A channel virtual file system (vfs) entry (fs_list row; operator dm 35).
+ *  `encoding: "base64"` marks binary entries on hubs that support them. */
 export type HubFsEntry = {
   path: string;
   version: number;
@@ -61,11 +62,13 @@ export type HubFsEntry = {
   size: number;
   description?: string;
   described?: boolean;
+  encoding?: string;
 };
 
-/** One file's content + metadata (fs_read). The hub fs is a TEXT store,
- *  so `content` is a string; `mime` says how to render it. */
-export type HubFsFile = { path: string; content: string; mime?: string; version?: number; updated_by?: string; updated_at?: number };
+/** One file's content + metadata (fs_read). `content` is the text body;
+ *  hubs with binary-fs support serve binary entries with `content` empty,
+ *  the bytes in `content_b64`, and `encoding: "base64"`. */
+export type HubFsFile = { path: string; content: string; content_b64?: string; encoding?: string; mime?: string; version?: number; updated_by?: string; updated_at?: number };
 
 /** /channels/{c}/info — charter + norms surface (the operator's per-channel
  *  charter visibility ask, 2026-07-13). `charter` is null when unset. */
@@ -76,7 +79,8 @@ export type HubChannelInfo = {
   response_sla_minutes?: number | null;
   language?: string | null;
   state?: string | null;
-  charter?: string | null;
+  /** Older hubs inline the text; agora/0.4 serves a channel-fs descriptor. */
+  charter?: string | { path?: string; version?: number; updated_by?: string; updated_at?: number } | null;
 };
 
 export type HubMessage = {
@@ -267,19 +271,29 @@ export type HubReputationVote = {
 };
 
 export type HubClientOptions = {
-  /** Empty means the browser's current origin (the production Hub-hosted mode). */
+  /** Empty means the browser's current origin (the production Hub-hosted
+   *  mode). A RELATIVE base (e.g. a host's own proxy prefix) is valid and
+   *  resolves against the page origin. */
   base_url?: string;
   /** Existing Agora seat key supplied by the user or a host. Never persisted. */
   bearer_token?: string;
+  /** Host-supplied live-socket URL, used VERBATIM (no token appended). For
+   *  hosts that terminate auth on their own relay and forbid token-in-URL;
+   *  the host owns its socket route, WUI just connects and subscribes.
+   *  Absent: the Hub's documented /ws?token=KEY lane is derived from
+   *  base_url + bearer_token as before. */
+  ws_url?: string;
 };
 
 export class HubClient {
   private readonly base_url: string;
   private readonly bearer_token: string;
+  private readonly ws_override: string;
 
   constructor(options: HubClientOptions = {}) {
     this.base_url = String(options.base_url || "").replace(/\/+$/, "");
     this.bearer_token = String(options.bearer_token || "");
+    this.ws_override = String(options.ws_url || "");
   }
 
   private url(path: string): string {
@@ -352,7 +366,12 @@ export class HubClient {
   async meta(): Promise<HubMeta> {
     const identity = await this._fetch("hub_whoami", "/whoami") as { id?: string };
     const origin = this.base_url || (typeof window === "undefined" ? "" : window.location.origin);
-    return { ok: true, hub_url: origin, seat: String(identity?.id || ""), seat_key_present: true };
+    // Evidence-derived, never asserted: a served identity proves an
+    // authenticated path exists — true in direct mode (bearer) AND behind
+    // a host proxy that holds the key server-side. `Boolean(bearer_token)`
+    // would lie in proxy mode; a hardcoded true made the missing-key
+    // diagnostic unreachable everywhere.
+    return { ok: true, hub_url: origin, seat: String(identity?.id || ""), seat_key_present: Boolean(identity?.id) };
   }
 
   /** Unauthenticated on the hub; forwards even without a seat key. */
@@ -377,7 +396,7 @@ export class HubClient {
     return await this._fetch("hub_digest", `/channels/${encodeURIComponent(channel)}/digest`);
   }
 
-  /** Channel virtual filesystem — table of contents (metadata only, no
+  /** Channel vfs — table of contents (metadata only, no
    *  content; operator dm 35 /fs browser). Rows: path/version/updated_by/
    *  updated_at/size/description. */
   async fs_list(channel: string, prefix = ""): Promise<HubFsEntry[]> {
@@ -393,6 +412,56 @@ export class HubClient {
     // addressable by the Hub's raw path route.
     const enc = path.split("/").map(encodeURIComponent).join("/");
     return (await this._fetch("hub_fs_read", `/channels/${encodeURIComponent(channel)}/fs/${enc}`)) as HubFsFile;
+  }
+
+  /** Write one vfs file (PUT /channels/{c}/fs/{path}). The
+   *  HUB enforces write policy (e.g. `channel/` is owner+operator) and the
+   *  optimistic-concurrency contract: expect_version must match the stored
+   *  version, 0 means create-only, omitted means unconditional. Refusals
+   *  surface verbatim — WUI never pre-judges who may write.
+   *  Exactly one of `content` (text) or `content_b64` (base64 bytes, hubs
+   *  with binary-fs support) is sent; the hub validates the pairing. */
+  async fs_put(
+    channel: string,
+    path: string,
+    body: { content?: string; content_b64?: string; expect_version?: number | null; mime?: string; description?: string },
+  ): Promise<HubFsEntry> {
+    const enc = path.split("/").map(encodeURIComponent).join("/");
+    return (await this._fetch("hub_fs_put", `/channels/${encodeURIComponent(channel)}/fs/${enc}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    })) as HubFsEntry;
+  }
+
+  /** Delete one vfs file (DELETE /channels/{c}/fs/{path}?expect_version=N).
+   *  The hub TOMBSTONES the entry (the path's version stays monotonic, so
+   *  CAS stays a valid fence across delete+recreate) and posts an audit
+   *  notice to the channel. expect_version makes the delete conditional on
+   *  the listing the user was looking at — a concurrent agent rewrite
+   *  surfaces as the hub's own conflict, never a blind removal. Channels
+   *  may gate deletion (`fs_remove`); refusals render verbatim. */
+  async fs_delete(channel: string, path: string, expect_version?: number): Promise<{ deleted: boolean }> {
+    const enc = path.split("/").map(encodeURIComponent).join("/");
+    const qs = expect_version !== undefined ? `?expect_version=${encodeURIComponent(String(expect_version))}` : "";
+    return (await this._fetch("hub_fs_delete", `/channels/${encodeURIComponent(channel)}/fs/${enc}${qs}`, {
+      method: "DELETE",
+    })) as { deleted: boolean };
+  }
+
+  /** Hub-wide standing missions (GET /admin/missions) — operator surface;
+   *  non-operator seats receive the hub's own refusal. */
+  async missions(): Promise<Array<{ agent_id: string; mission: string }>> {
+    const res = await this._fetch("hub_missions", "/admin/missions");
+    return Array.isArray(res) ? res : [];
+  }
+
+  /** Set an agent's standing mission (PUT /admin/agents/{id}/mission) —
+   *  operator surface; the hub authorizes, refusals render verbatim. */
+  async set_mission(agent_id: string, mission: string): Promise<Record<string, unknown>> {
+    return await this._fetch("hub_set_mission", `/admin/agents/${encodeURIComponent(agent_id)}/mission`, {
+      method: "PUT",
+      body: JSON.stringify({ mission }),
+    });
   }
 
   /** The operator seat's unread envelopes (per-channel badge source). */
@@ -927,10 +996,16 @@ export class HubClient {
    * browser lane is /ws?token=KEY, so derive that existing Hub endpoint from
    * the in-memory seat key. No WUI session, proxy, or minting is involved. */
   ws_url(): string | null {
+    // A host-supplied socket URL wins, verbatim: the host owns its route
+    // and its auth (e.g. a relay that forbids token-in-URL and attaches
+    // the key server-side). WUI appends nothing.
+    if (this.ws_override) return this.ws_override;
     const rest = this.base_url || (typeof window === "undefined" ? "" : window.location.origin);
     if (!rest || !this.bearer_token) return null;
     try {
-      const url = new URL(rest);
+      // Relative bases (a host's proxy prefix) resolve against the page
+      // origin instead of throwing into the null branch.
+      const url = new URL(rest, typeof window === "undefined" ? undefined : window.location.origin);
       if (url.protocol === "https:") url.protocol = "wss:";
       else if (url.protocol === "http:") url.protocol = "ws:";
       else return null;

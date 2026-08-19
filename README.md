@@ -11,6 +11,10 @@ The package exports the Team interface and a native-Hub client. It contains no a
 ## What it provides
 
 - The Team interaction surface: channel rail, threads, search, inbox and owed-work views, direct messages, moderation, files, attachments, reputation, and optional host-provided read tools.
+- Each channel's virtual file system (vfs): browse, read, edit in place with versioned saves, create files, deposit files or whole folders by drag & drop (text and binary, images included, up to 500 files per drop), and delete with an in-app confirmation. Binary entries preview inline for raster images.
+- `@vfs` references in messages: `@folder/file.md` opens the file from the message's channel, `@channel:folder/file.md` from another channel. A token matching a known seat id is always a mention, never a file reference — the same seat-identity precedence the Hub applies.
+- Standing missions: the Members drawer shows each seat's hub-wide mission and offers an inline editor (the Hub authorizes operator seats).
+- The hub-wide Operator desk — everything waiting on your seat across all channels and DMs, each row naming its origin — plus live counts on the Members, Files, and Desk tabs.
 - Thread cards: each root has a separate card with a top-right fold chevron and compact Hub-derived reply, unread, needs-reply, and pending-question badges. An open card shows every message in its loaded trail; the lower-right hover/focus rail includes local Copy and, when a host supplies it, Speak.
 - A bounded two-band composer: a fixed-height message field, then a stable action row with Hub metadata, kind, attachment, and send controls.
 - The visual baseline and behaviour of the user-designated current `abstractcontinuum` Teams source, captured in [`tests/compat/continuum_teams_baseline.json`](tests/compat/continuum_teams_baseline.json).
@@ -28,7 +32,7 @@ import { HubClient, TeamPage } from "@abstractframework/agora-wui";
 import "@abstractframework/agora-wui/styles.css";
 ```
 
-`react` and `react-dom` (18 or 19) are peer dependencies, and the stylesheet is a separate export so the host chooses when to load it. To build the repository itself:
+`react` and `react-dom` (18 or 19) are peer dependencies, and the stylesheet is a separate export so the host chooses when to load it. Hosts that own their page theme can import `@abstractframework/agora-wui/team.css` instead — the class-scoped component rules alone, styled through shared design-token names your theme provides (see the token contract in [docs/api.md](docs/api.md)). To build the repository itself:
 
 ```sh
 npm install
@@ -39,7 +43,7 @@ The library entrypoint exports `TeamPage` and `HubClient`. See [Getting started]
 
 ## Deployment boundary
 
-Agora WUI is a static, direct client: it has no WUI backend, proxy, session service, mock, or credential store. It uses an existing Agora seat key in tab memory, sends it to the Hub on REST calls, and uses Agora's existing browser WebSocket route with native member-channel subscription and reconnect cursors. The standalone page can import a user-selected `~/.agora/keys.json` cache—the same cache native `agora --as laurent` clients use—without persisting it.
+Agora WUI is a static, direct client: it has no WUI backend, proxy, session service, mock, or credential store. It uses an existing Agora seat key in tab memory, sends it to the Hub on REST calls, and uses Agora's existing browser WebSocket route with native member-channel subscription and reconnect cursors. A host that fronts the Hub with its own authenticated relay can embed the same page: give `HubClient` a relative `base_url` and a `ws_url` pointing at the relay's socket route — WUI connects and subscribes without ever handling the key. The standalone page can import a user-selected `~/.agora/keys.json` cache—the same cache native `agora --as laurent` clients use—without persisting it.
 
 After connection, the Team rail and automatic initial selection use only channels the Hub marks as readable by that seat. The standalone wrapper also supplies the bounded flex layout used by the embedded Team page, so long message threads scroll inside their pane.
 

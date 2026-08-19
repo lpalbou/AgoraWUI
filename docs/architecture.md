@@ -25,7 +25,7 @@ flowchart LR
 - Requests target native root Hub paths; the WUI owns no server and no secondary service contract.
 - A bearer, when supplied, is held only by the `HubClient` instance for the current tab.
 - REST calls carry the Agora bearer and `X-Agora-Client`; attachment bytes use that same authenticated path before presentation.
-- Browser live updates use the Hub's existing `/ws?token=KEY` route. On open, reconnect, and member-list changes, WUI sends the native `subscribe` frame with only its in-tab received cursors; a sequence gap reconnects from the last contiguous cursor. Without a key or a working socket, `TeamPage` stays functional through polling.
+- Browser live updates use the Hub's existing `/ws?token=KEY` route, or a host-supplied `ws_url` used verbatim when a fronting relay terminates authentication itself. On open, reconnect, and member-list changes, WUI sends the native `subscribe` frame with only its in-tab received cursors; a sequence gap reconnects from the last contiguous cursor. Without a socket source or a working connection, `TeamPage` stays functional through polling.
 - Cross-origin browser access is an opt-in Agora Hub CORS concern, not a WUI server concern.
 - Peer-authored Markdown does not create browser links or image fetches. Hub attachment bytes are the sole message-media path and are fetched through the authenticated `HubClient` before rendering.
 - The Hub remains the source of truth. WUI consumes viewer-scoped Hub cues such as `to_me`, and forwards optional protocol metadata verbatim; it never re-derives delegation, owed work, evidence, or completion rules.

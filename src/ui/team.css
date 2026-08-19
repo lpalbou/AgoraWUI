@@ -1,0 +1,5188 @@
+/* Agora WUI TEAM LAYER: every class-scoped rule for the Team surface.
+   Reads the token names defined by theme.css (or the embedding host's own
+   theme). No bare element selectors — importing this file must never
+   restyle a host page outside the component tree. */
+
+/* TeamPage expects the same bounded flex parent that Continuum's shell
+   provides. Without it, the page grows past the hidden document and its
+   internal message pane has no scrollable height. */
+.wui_app { height: 100%; min-height: 0; display: flex; }
+/* Session control lives in the drawer-tab gutter (the 30px rail column),
+   styled in the same pull-handle language as the drawer tabs. The old
+   floating bottom-right chip sat on top of the composer's Send button. */
+.wui_disconnect {
+  position: fixed;
+  right: 0;
+  bottom: 16px;
+  z-index: 20;
+  writing-mode: vertical-rl;
+  padding: 14px 6px;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-right: none;
+  border-radius: 0;
+  /* Trapeze mirrored vs the drawer tabs (operator ask 2026-08-20): the
+     drawer tabs pull a panel OUT of the edge; this one is an exit — the
+     opposite slant keeps it from reading as a fifth drawer. Text upright. */
+  clip-path: polygon(0 9%, 100% 0, 100% 100%, 0 91%);
+  /* Red by default (operator ask 2026-08-20): the session kill-switch must
+     be findable at a glance, and destructive red is exactly its meaning. */
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--danger, #f87171);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.wui_disconnect:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.30);
+  color: var(--text-primary);
+}
+.wui_bootstrap { min-height: 100%; display: grid; place-items: center; padding: 24px; background: var(--bg-primary); }
+.wui_bootstrap_card { width: min(520px, 100%); padding: 28px; border: 1px solid var(--ui-border-1); border-radius: 14px; background: var(--bg-secondary); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25); }
+.wui_bootstrap_card h1 { margin: 4px 0 12px; }
+.wui_bootstrap_card form { display: grid; gap: 8px; margin-top: 20px; }
+.wui_bootstrap_card form label { font-weight: 650; margin-top: 6px; }
+.wui_bootstrap_card form button { justify-self: start; margin-top: 8px; }
+.wui_bootstrap_note { margin-top: 20px; font-size: var(--font-size-sm); }
+.wui_chat_composer { display: flex; gap: 8px; align-items: end; }
+.wui_chat_composer textarea { flex: 1; min-width: 0; resize: vertical; }
+
+/* App shell (Observer-specific mapping to Flow layout vocabulary) */
+
+/* ===============================
+   SHELL (redesign 2026-07): left sidebar + slim header. The root must give
+   pages a bounded height or internal scroll containers cannot scroll.
+   =============================== */
+.shell {
+  display: flex;
+  flex-direction: row;
+  height: 100vh;
+  min-width: 0;
+}
+
+.shell_sidebar {
+  flex: 0 0 196px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--bg-tertiary);
+  min-height: 0;
+}
+
+.shell_brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 14px 10px;
+  min-width: 0;
+}
+
+.shell_brand_mark {
+  font-size: var(--font-size-xl);
+  line-height: 1;
+  color: var(--accent, #ff6b81);
+}
+
+.shell_brand_name {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.shell_nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.shell_nav_item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--font-size-md);
+  min-width: 0;
+}
+
+.shell_nav_item:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text);
+}
+
+.shell_nav_item.active {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.shell_nav_icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.shell_nav_label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+
+
+
+
+
+
+.shell_main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.shell_header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  background: var(--bg-secondary);
+}
+
+.shell_header_title {
+  font-weight: 700;
+  font-size: var(--font-size-lg);
+}
+
+.shell_header_actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.shell_banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(234, 179, 8, 0.25);
+  background: rgba(234, 179, 8, 0.08);
+}
+
+.shell_banner.shell_banner_ok {
+  border-bottom-color: rgba(34, 197, 94, 0.25);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.shell_content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .shell_sidebar {
+    flex-basis: 56px;
+  }
+
+  .shell_brand_name,
+  .shell_nav_label {
+    display: none;
+  }
+
+  .shell_nav_item {
+    justify-content: center;
+  }
+
+  }
+
+/* ===============================
+   BOARD (kanban)
+   =============================== */
+.board_page_root {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px 16px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.board_toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.board_search {
+  flex: 1 1 220px;
+  min-width: 180px;
+  max-width: 380px;
+}
+
+.board_toolbar_spacer {
+  flex: 1 1 auto;
+}
+
+.board_error {
+  color: rgba(239, 68, 68, 0.9);
+  font-size: var(--font-size-sm);
+}
+
+.board_warn {
+  color: rgb(250, 204, 21);
+  font-size: var(--font-size-sm);
+}
+
+/* Label facet row (sprints ride sprint-N labels). */
+.board_facets {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.board_facets_caption {
+  font-size: var(--font-size-xs);
+}
+
+.board_facet {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.board_facet.active {
+  border-color: rgba(59, 130, 246, 0.7);
+  background: rgba(59, 130, 246, 0.25);
+  color: var(--text);
+}
+
+/* HORIZONTAL SCROLLING IS FORBIDDEN (operator rule 2026-07-14 21:13) —
+   the lanes WRAP into a second row on narrow windows instead of
+   scrolling sideways (adversary P0: the landing page violated the rule
+   the same hour the backlog table was fixed). */
+.board_columns {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 4px;
+  align-content: flex-start;
+}
+
+.board_column {
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  max-height: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 12px;
+}
+
+.board_column_header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.board_column_title {
+  font-weight: 700;
+  font-size: var(--font-size-md);
+}
+
+.board_column_in_review .board_column_title {
+  color: rgb(250, 204, 21);
+}
+
+.board_column_failed .board_column_title {
+  color: rgb(248, 113, 113);
+}
+
+.board_column_count {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.board_column_body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.board_column_empty {
+  text-align: center;
+  padding: 14px 0;
+  font-size: var(--font-size-sm);
+}
+
+.board_card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.14);
+  padding: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.board_card:hover {
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.board_card.draggable {
+  cursor: grab;
+}
+
+.board_card.draggable:active {
+  cursor: grabbing;
+}
+
+.board_column.drag_over {
+  outline: 2px dashed rgba(59, 130, 246, 0.6);
+  outline-offset: -2px;
+}
+
+.board_card_title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.board_card_title_text {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.board_ready_dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  align-self: center;
+}
+
+.board_ready_dot.ok {
+  background: rgb(74, 222, 128);
+}
+
+.board_ready_dot.warn {
+  background: rgb(250, 204, 21);
+}
+
+.board_card_chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.board_prio_p0 {
+  color: rgb(248, 113, 113);
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.14);
+}
+
+.board_prio_p1 {
+  color: rgb(251, 146, 60);
+  border-color: rgba(249, 115, 22, 0.45);
+  background: rgba(249, 115, 22, 0.12);
+}
+
+.board_prio_p2 {
+  color: rgb(96, 165, 250);
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.board_prio_p3 {
+  color: var(--text-secondary);
+}
+
+.board_card_actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ===============================
+   WORK-ITEM DRAWER
+   =============================== */
+.work_drawer {
+  display: flex;
+  flex-direction: column;
+}
+
+.work_drawer_tabs {
+  padding: 0 14px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.work_drawer_body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+
+.work_meta_editor {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.work_meta_editor input {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.work_spec_editor {
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+}
+
+.work_run_row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--bg-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.work_dod_list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.work_dod_item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--font-size-md);
+  cursor: pointer;
+}
+
+.work_dod_item input {
+  margin-top: 3px;
+}
+
+/* ===============================
+   AGENTS
+   =============================== */
+.agents_grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.agent_avatar {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid var(--border);
+  font-size: var(--font-size-lg);
+}
+
+/* Card fact lines: PROSE in the UI font — label muted, value primary.
+   (These carried .mono for a full sentence per line; operator 2026-07-14:
+   "even the font is horrible".) */
+.agent_facts {
+  font-size: var(--font-size-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.agent_facts .muted {
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+/* Shared empty/hint note: quiet, sans-serif, consistent across panes. */
+.empty_note {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: 1.55;
+  padding: 6px 4px;
+  max-width: 64ch;
+}
+
+/* Callout: icon + structured content (replaces the pane-dressed setup
+   box — a warn callout is a MESSAGE, not a data pane). */
+.callout {
+  display: flex;
+  gap: 12px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  padding: 14px 16px;
+  max-width: 780px;
+}
+
+.callout.callout_warn {
+  border-color: rgba(250, 204, 21, 0.35);
+  background: rgba(250, 204, 21, 0.05);
+}
+
+.callout_icon {
+  flex: 0 0 auto;
+  color: var(--warning, #facc15);
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
+}
+
+.callout_main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.callout_title {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.callout_text {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.callout_text.muted {
+  color: var(--text-muted);
+}
+
+.callout_actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* Active run cards (Executions): board-card grammar — title first,
+   status chip right, meta row below. */
+.run_card {
+  appearance: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--border, var(--bg-tertiary));
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.14);
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.run_card:hover:not(:disabled) {
+  border-color: rgba(148, 163, 184, 0.5);
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.run_card.selected {
+  border-color: var(--info-border, rgba(96, 165, 250, 0.5));
+  background: var(--info-subtle, rgba(96, 165, 250, 0.08));
+}
+
+.run_card.is_running {
+  border-left: 3px solid var(--info, #60a5fa);
+}
+
+.run_card_head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.run_card_title {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.run_card_meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.run_card_time {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  flex: 1 1 auto;
+}
+
+.run_card_id {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+/* Run-detail fact grid: label-over-value cells in the UI font — replaces
+   the observer-era key:value mono wall. Mono only on path/hash values. */
+.fact_grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 16px;
+  font-size: var(--font-size-sm);
+  margin: 4px 0;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.fact_wide {
+  grid-column: 1 / -1;
+}
+
+.fact_label {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.fact_value {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.fact_value.mono {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+/* Path lists (backlog queue etc.): small mono rows, wrap-safe. */
+.path_list {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-wrap: anywhere;
+  margin: 4px 0;
+}
+
+/* Prose blocks in the detail pane (agent last-message etc.). */
+.detail_prose {
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  max-width: 80ch;
+  overflow-wrap: anywhere;
+}
+
+/* Detail-pane inline notes: warnings and hints in the UI font. */
+.detail_warn {
+  color: var(--danger, rgb(248, 113, 113));
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  margin-top: 8px;
+  max-width: 72ch;
+}
+
+.detail_hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  margin-top: 8px;
+  max-width: 72ch;
+}
+
+/* Recently finished: row list (status chip, name, duration). */
+.recent_list {
+  display: flex;
+  flex-direction: column;
+}
+
+.recent_row {
+  appearance: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--bg-tertiary);
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.recent_row:last-child {
+  border-bottom: none;
+}
+
+.recent_row:hover:not(:disabled) {
+  background: var(--ui-overlay-bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.recent_row.selected {
+  background: var(--info-subtle, rgba(96, 165, 250, 0.1));
+}
+
+.recent_row_name {
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.recent_row_time {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+/* Status tag on process cards (chip-shaped, status-toned). */
+
+
+
+
+
+/* (.nav_tab removed 2026-07-13 — Services rides the shared .seg control;
+   the connection LED died with the unified top-bar adoption, uic c1648.) */
+
+.page {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ===============================
+   PAGE DESIGN SYSTEM (aesthetics pass 2026-07-13): every tab shares the
+   BOARD's language — a flat toolbar row directly on the page background
+   (no page-title card: the shell header already names the page), then
+   PANE surfaces styled like board columns (bg-secondary body, bordered
+   header carrying the section title + count, internal scroll).
+   =============================== */
+
+/* Flat page container: the board_page_root recipe for every tab. */
+.page_pad {
+  padding: 12px 16px 16px;
+  gap: 10px;
+}
+
+.page.page_scroll .page_inner.page_pad {
+  padding: 12px 16px 16px;
+}
+
+.page_toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.page_toolbar_spacer {
+  flex: 1 1 auto;
+}
+
+.page_error {
+  color: rgba(239, 68, 68, 0.9);
+  font-size: var(--font-size-sm);
+}
+
+.page_hint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* Pane: the board-column surface generalized to page sections. */
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.pane_header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.pane_title {
+  font-weight: 700;
+  font-size: var(--font-size-md);
+}
+
+.pane_count {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+/* Pane subtitle (backlog 0010: pane_count doubled as a tagline slot) —
+   PROSE next to a pane title. Same scale as the count, muted + italic so
+   counts and sentences read as different things. */
+.pane_subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, var(--text-secondary));
+  font-style: italic;
+}
+
+.pane_header_actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pane_body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+}
+
+.pane_body.pane_body_list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+/* Full-page-scroll pages (Settings / Agents / Services): ONE scrollbar.
+   Panes grow to their content and the PAGE scrolls — nested per-card
+   scrollbars measured "unusable" by the operator (2026-07-14). */
+.page_scroll .pane {
+  flex: 0 0 auto;
+}
+
+.page_scroll .pane_body {
+  flex: none;
+  overflow: visible;
+}
+
+/* HORIZONTAL SCROLLING IS FORBIDDEN (operator rule 2026-07-14 21:13).
+   Wide tables FIT by wrapping their cells — the wrapper survives as the
+   fit boundary, never a scroll container. */
+.table_scroll {
+  max-width: 100%;
+}
+
+.table_scroll .data_table th,
+.table_scroll .data_table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Segmented control: replaces the observer-era pill .tab rows. */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--bg-tertiary);
+  background: var(--bg-secondary);
+  border-radius: 10px;
+}
+
+.seg_btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 6px 12px; /* 3px seg padding + 6px = aligns with input heights */
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.seg_btn:hover:not(:disabled) {
+  background: var(--ui-overlay-bg-hover, rgba(255, 255, 255, 0.07));
+  color: var(--text-primary);
+  transform: none;
+}
+
+.seg_btn.active {
+  background: var(--ui-surface-2, rgba(255, 255, 255, 0.08));
+  border-color: var(--ui-border-2, rgba(255, 255, 255, 0.16));
+  color: var(--text-primary);
+}
+
+/* Many-tab segments (Backlog) scroll horizontally on narrow screens. */
+.seg.seg_scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.seg.seg_scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.seg.seg_scroll .seg_btn {
+  flex: 0 0 auto;
+}
+
+/* Detail-pane host that scrolls as one surface (backlog item/exec detail).
+   overflow-y is load-bearing: .pane clips (adversarial P0 2026-07-13 — the
+   old .inbox_viewer host scrolled; losing that clipped long specs and the
+   whole edit flow). */
+.pane.pane_pad_body {
+  padding: 12px 14px;
+  overflow-y: auto;
+}
+
+/* Entity cards (processes, env vars, agents): the board_card family. */
+.entity_card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.14);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.entity_card_head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.entity_card_title {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity_card_sub {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity_card_actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Executions layout: side column holds two stacked panes. */
+.exec_layout {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.exec_side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.exec_pane_active {
+  flex: 1.2 1 0;
+}
+
+.exec_pane_recent {
+  flex: 1 1 0;
+}
+
+/* Active-run cards are buttons: reset + selectable state. */
+/* Backlog archive table. */
+.backlog_table_pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.backlog_row {
+  cursor: pointer;
+}
+
+/* HORIZONTAL SCROLLING IS FORBIDDEN (operator rule 2026-07-14 21:13):
+   the table is width-fixed — the title column absorbs the slack and
+   ellipsizes; ancillary columns hide on narrower windows instead of
+   pushing the actions off-screen. */
+.backlog_table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.backlog_table th,
+.backlog_table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.backlog_table .col_sel {
+  width: 30px;
+}
+
+.backlog_table .col_id {
+  width: 46px;
+}
+
+.backlog_table .col_type {
+  width: 88px;
+}
+
+.backlog_table .col_package {
+  width: 132px;
+}
+
+.backlog_table .col_priority {
+  width: 58px;
+}
+
+.backlog_table .col_labels {
+  width: 190px;
+}
+
+.backlog_table .col_actions {
+  width: 216px;
+}
+
+/* Row actions stay ON the row at any width: compact buttons, no wrap
+   pushing the table wider. */
+.backlog_table .col_actions .btn {
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+}
+
+.backlog_table .col_actions .entity_card_actions {
+  flex-wrap: nowrap;
+}
+
+.backlog_table .col_labels .chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+@media (max-width: 1280px) {
+  .backlog_table .col_labels {
+    display: none;
+  }
+}
+
+@media (max-width: 1080px) {
+  .backlog_table .col_package {
+    display: none;
+  }
+}
+
+.backlog_table_title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.backlog_table_sel {
+  width: 30px;
+}
+
+.backlog_table_actions {
+  text-align: right;
+}
+
+.backlog_table_actions .entity_card_actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.backlog_table_actions .btn {
+  padding: 4px 10px;
+  font-size: var(--font-size-sm);
+}
+
+/* ===============================
+   TEAM (agora hub in the console)
+   Density model (operator redesign 2026-07-14): messages are compact ROWS
+   inside thread groups, not cards — vertical rhythm over chrome. Prose
+   renders in the UI font; mono is reserved for seqs/ids/timestamps.
+   =============================== */
+.team_layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px 1fr 30px;
+  gap: 10px;
+  /* Anchor for the ≤1350px overlay drawers below. */
+  position: relative;
+}
+
+.team_layout.with_drawer {
+  grid-template-columns: 240px minmax(420px, 1fr) 360px 30px;
+}
+
+/* Tabular drawers (Leaderboard) get a wider column: a 4-axis score table
+   cannot honestly fit 360px, and clipped columns read as horizontal
+   scrolling — which this page does not allow (operator dm 58). The column
+   flexes up to 560px and the table's own grid flexes to fill it. */
+.team_layout.with_drawer.drawer_wide {
+  grid-template-columns: 240px minmax(380px, 1fr) minmax(460px, 560px) 30px;
+}
+
+/* With a drawer open on a narrow window, the drawer becomes an OVERLAY
+   above the thread pane instead of a grid column. Channel navigation
+   never disappears: losing the rail behind a drawer stranded the reader
+   with no way to change rooms (operator escalation 2026-08-19). */
+@media (max-width: 1350px) {
+  .team_layout.with_drawer,
+  .team_layout.with_drawer.drawer_wide {
+    grid-template-columns: 240px 1fr 30px;
+  }
+
+  .team_layout.with_drawer .team_drawer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 40px; /* flush against the drawer-tab gutter */
+    width: min(420px, calc(100% - 290px));
+    z-index: 30;
+    box-shadow: -24px 0 48px rgba(0, 0, 0, 0.45);
+  }
+
+  .team_layout.with_drawer.drawer_wide .team_drawer {
+    width: min(560px, calc(100% - 290px));
+  }
+}
+
+/* Right-edge drawer rail (operator dm 53): two always-visible vertical
+   trapeze tabs — Assistant + Files. The trapeze narrows toward the outer
+   edge (clip-path) so the tabs read as pull-handles on the drawer. */
+.team_drawer_rail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding-top: 40px;
+}
+
+.team_drawer_tab {
+  writing-mode: vertical-rl;
+  padding: 18px 6px;
+  border: 1px solid var(--bg-tertiary);
+  border-right: none;
+  border-radius: 0;
+  clip-path: polygon(0 0, 100% 9%, 100% 91%, 0 100%);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.team_drawer_tab:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.team_drawer_tab.active {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 18%, var(--bg-secondary));
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent, #3b82f6) 45%, var(--bg-tertiary));
+}
+
+.team_drawer_tab:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Drive-style breadcrumbs in the Files drawer. */
+.team_fs_crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.team_fs_crumb {
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.team_fs_crumb:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.team_fs_crumb.active {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.team_fs_crumb_sep {
+  color: var(--text-muted);
+}
+
+.team_fs_icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.team_fs_dir .team_fs_icon {
+  color: var(--warning, #eab308);
+}
+
+.team_file_name_wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.team_channels_pane {
+  min-height: 0;
+}
+
+.team_channel {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.team_channel:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.team_channel.selected {
+  border-color: var(--info-border, rgba(96, 165, 250, 0.4));
+  background: var(--info-subtle, rgba(96, 165, 250, 0.1));
+}
+
+.team_channel_line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.team_channel_name {
+  font-weight: 500;
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.team_channel_name.has_unread {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.team_channel.selected .team_channel_name {
+  color: var(--text-primary);
+}
+
+.team_channel_badges {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+/* Per-channel vigilance badges: unread envelopes + open questions. */
+.team_badge {
+  font-size: max(10px, calc(var(--font-size-xs) * 0.9));
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-family: var(--font-mono, monospace);
+}
+
+.team_badge.unread {
+  background: rgba(96, 165, 250, 0.2);
+  color: var(--info, #60a5fa);
+}
+
+.team_badge.asks {
+  background: rgba(250, 204, 21, 0.16);
+  color: var(--warning, #facc15);
+}
+
+.team_channel_meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.team_thread_pane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.team_thread_header {
+  flex-wrap: wrap;
+}
+
+.team_filterbar {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  /* Wrap whole groups to new rows rather than letting them shrink:
+     a shrunken seg painted its overflowing buttons underneath the
+     nowrap meta text — "Top voted" was unclickable at 1000–1200px. */
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.team_filterbar .seg {
+  flex: 0 0 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.team_filterbar .seg_btn {
+  white-space: nowrap;
+}
+
+.team_filterbar .team_search_bar {
+  flex: 1 1 200px;
+  min-width: 150px;
+}
+
+.team_filterbar_meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Count pills: neutral by default — yellow was doing five jobs on this
+   page (design #8); the vigilance count keeps the warning tone. */
+.team_filter_count {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  font-size: max(10px, calc(var(--font-size-xs) * 0.9));
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.seg_btn[title*="vigilance" i] .team_filter_count,
+.team_filter_count.tone_warn {
+  background: rgba(250, 204, 21, 0.15);
+  color: var(--warning, #facc15);
+}
+
+.team_thread {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  padding: 4px 12px 10px;
+}
+
+.team_pane_title {
+  font-size: var(--font-size-lg);
+}
+
+/* Day divider: temporal landmark between thread groups. */
+.team_day_divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 6px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.team_day_divider span {
+  background: var(--bg-secondary);
+  border: 1px solid var(--bg-tertiary);
+  padding: 2px 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.team_day_divider::before,
+.team_day_divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--bg-tertiary);
+}
+
+/* A thread is a first-class, independently scannable collaboration unit.
+   The card deliberately does not clip overflow: each message owns a
+   hover/focus action dock that must remain reachable beyond its text. */
+.team_thread_group {
+  margin: 10px 0;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 12px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--bg-secondary) 60%, transparent);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.1);
+}
+
+.team_thread_group_folded {
+  background: color-mix(in srgb, var(--bg-secondary) 42%, transparent);
+}
+
+.team_thread_card_header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 1px 2px 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--bg-tertiary) 78%, transparent);
+}
+
+.team_thread_card_header.folded {
+  padding-bottom: 1px;
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+
+.team_thread_identity {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.team_thread_sender {
+  flex: 0 0 auto;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.team_thread_preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team_thread_preview::after {
+  content: attr(data-preview);
+}
+
+.team_thread_utilities {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.team_thread_stat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.team_thread_stat.new {
+  border-color: color-mix(in srgb, var(--info, #60a5fa) 55%, transparent);
+  color: var(--info, #60a5fa);
+}
+
+.team_thread_stat.debt {
+  border-color: color-mix(in srgb, var(--warning, #fbbf24) 58%, transparent);
+  color: var(--warning, #fbbf24);
+}
+
+.team_thread_stat.ask {
+  border-color: color-mix(in srgb, var(--accent, #79c7ff) 52%, transparent);
+  color: var(--accent, #79c7ff);
+}
+
+.team_thread_group > .team_thread_content > .team_row .team_row_body {
+  color: var(--text-primary);
+}
+
+.team_thread_group .team_replies .team_row_body {
+  color: var(--text-secondary);
+}
+
+/* Secondary thread tools stay inside the card; fold/unfold lives once in
+   the header, where it is easy to find before reading the body. */
+.team_trail_bar {
+  display: flex;
+  gap: 4px;
+  padding: 2px 0 2px 34px;
+  flex-wrap: wrap;
+}
+
+.team_thread_toggle,
+.team_thread_tool {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+}
+
+.team_thread_toggle:hover:not(:disabled),
+.team_thread_tool:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+}
+
+.team_thread_toggle:focus-visible,
+.team_thread_tool:focus-visible {
+  outline: 2px solid var(--accent, #79c7ff);
+  outline-offset: 1px;
+}
+
+.team_thread_toggle_chevron {
+  color: currentColor;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.team_thread_toggle {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--accent, #79c7ff) 62%, var(--bg-tertiary));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent, #79c7ff) 16%, var(--bg-tertiary));
+  color: var(--accent, #79c7ff);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+}
+
+.team_thread_toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.team_summarize {
+  border-color: rgba(167, 139, 250, 0.35);
+  color: rgb(196, 181, 253);
+}
+
+.team_summarize:hover:not(:disabled) {
+  border-color: rgba(167, 139, 250, 0.6);
+}
+
+.team_summarize:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.team_orphan {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  padding-bottom: 2px;
+}
+
+/* Message ROW — avatar + content + hover action rail (design pass
+   2026-07-14: identity anchor, larger action targets). */
+.team_row {
+  padding: 3px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  position: relative;
+}
+
+.team_row:hover {
+  background: var(--ui-overlay-bg-hover, rgba(255, 255, 255, 0.03));
+}
+
+.team_avatar {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: max(10px, calc(var(--font-size-xs) * 0.85));
+  font-weight: 700;
+  margin-top: 2px;
+  user-select: none;
+}
+
+.team_row_main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Bottom-right message action dock. It is visually quiet until hover, yet
+   remains in the tab order: focus-within reveals it before keyboard use. */
+.team_row_rail {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  display: flex;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 2px;
+  z-index: 2;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.team_row:hover .team_row_rail,
+.team_row:focus-within .team_row_rail {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Touch devices have no hover. The same rail becomes a bottom footer with
+   44px targets rather than an inaccessible floating overlay. */
+@media (pointer: coarse) {
+  .team_row {
+    flex-wrap: wrap;
+  }
+
+  .team_row.has_actions {
+    padding-bottom: 3px;
+  }
+
+  .team_row_main {
+    flex-basis: calc(100% - 28px);
+  }
+
+  .team_row_rail {
+    position: static;
+    margin-left: auto;
+    margin-top: 4px;
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    box-shadow: none;
+    border: none;
+    background: transparent;
+    padding: 0;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .team_resolve_wrap {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .team_resolve_data {
+    max-width: 100%;
+  }
+
+}
+
+/* Inline reputation thumbs in the row rail (operator dm 16). Hollow =
+   no stance, filled + hue = your live vote; a second click withdraws.
+   Sized to sit quietly beside Reply/Resolve, not shout. */
+.team_vote_thumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 2px;
+  border-right: 1px solid var(--border-secondary);
+  padding-right: 5px;
+}
+
+.team_row_rail .team_thumb:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+/* ONE control recipe for every rail act (operator dm 61: "the 3 buttons
+   should be vertically aligned and have the same cast shadow"): identical
+   height, centering, radius, and shadow — thumbs and Reply/Resolve must
+   read as one toolbar, not three species of pill. The doubled selector
+   out-specifies the LATER `.btn.btn_icon` base (padding 8px 10px), which
+   was exactly the old height mismatch. */
+.team_row_rail .btn,
+.team_row_rail .btn.btn_icon {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  font-size: var(--font-size-xs);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+@media (pointer: coarse) {
+  .team_row_rail .btn,
+  .team_row_rail .btn.btn_icon {
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
+  }
+}
+
+.team_hub_data {
+  width: 100%;
+  min-height: 68px;
+  resize: vertical;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.team_hub_data_toggle.active {
+  color: var(--accent, var(--color-accent));
+}
+
+.team_resolve_wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.team_resolve_data {
+  width: min(300px, 42vw);
+  min-width: 150px;
+}
+
+.team_row_rail .btn.team_thumb {
+  min-width: 26px;
+  padding: 0 6px;
+  color: var(--text-tertiary);
+}
+
+/* Copy feedback stays on its own control: it never enters the top status
+   strip and therefore cannot move the conversation while the user reads. */
+.team_row_rail .team_copy.team_copy_copied {
+  color: var(--success, #22c55e);
+}
+
+.team_row_rail .team_copy.team_copy_failed {
+  color: var(--danger, #ef4444);
+}
+
+/* PRESSED state must be unmissable (operator dm 20): solid-filled glyph on
+   a tinted pill with a matching ring — not a subtle stroke recolor. The
+   SOLID comes from the kit's thumbsUpFilled/thumbsDownFilled glyphs
+   (closed silhouettes, per-path fill) swapped in by the page — a CSS
+   `fill` on the stroke glyphs cannot solidify their open outlines
+   (operator dm 58 handoff). The ring and the shared cast shadow ride ONE
+   box-shadow list (a bare inset ring would DROP the toolbar shadow and
+   re-break dm 61's same-shadow rule). */
+.team_row_rail .team_thumb.up_on,
+.team_row_rail .team_thumb.up_on:hover:not(:disabled) {
+  color: var(--success, #22c55e);
+  background: color-mix(in srgb, var(--success, #22c55e) 22%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--success, #22c55e) 55%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.team_row_rail .team_thumb.down_on,
+.team_row_rail .team_thumb.down_on:hover:not(:disabled) {
+  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 22%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--danger, #ef4444) 55%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.team_row.own {
+  background: rgba(96, 165, 250, 0.03);
+  box-shadow: inset 2px 0 0 var(--info, #60a5fa);
+}
+
+/* Row matching the ACTIVE filter — the reason it is on screen. */
+.team_row.hit {
+  border-left: 3px solid var(--warning, #facc15);
+  padding-left: 3px;
+}
+
+/* Reply target: the row the composer is answering (critic F9). */
+.team_row.replying {
+  outline: 1px solid var(--info-border, rgba(96, 165, 250, 0.5));
+  background: var(--info-subtle, rgba(96, 165, 250, 0.07));
+}
+
+.team_unread_dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--info, #60a5fa);
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+/* Acked-but-never-read pill (comms-audit ask 1): the burst-skip — swept
+   by the cursor, never opened. Amber/warning tone (not the blue NEW dot):
+   it's a "you may have missed this", a softer alarm than an owed debt. */
+.team_chip_seen {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: max(9px, calc(var(--font-size-xs) * 0.85));
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: help;
+  color: var(--warning, #fbbf24);
+  background: color-mix(in srgb, var(--warning, #fbbf24) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning, #fbbf24) 45%, transparent);
+}
+
+.team_row.unread {
+  background: color-mix(in srgb, var(--info, #60a5fa) 5%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--info, #60a5fa) 75%, transparent);
+}
+
+/* Own rows already carry a 2px info inset; unread wins while it lasts
+   (an own unread is near-impossible — the seat wrote it — but a forged
+   sender must not double-stripe). */
+.team_row.own.unread {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--info, #60a5fa) 75%, transparent);
+}
+
+/* Invite-to-channel row in the Members drawer (operator dm 79). */
+.team_invite_row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 8px;
+}
+
+.team_invite_select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* /group live preview above the composer (agora dm 23): what gets
+   created, before the click. */
+.team_group_preview {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px dashed color-mix(in srgb, var(--accent, #3b82f6) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 7%, transparent);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.team_group_label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: var(--accent, #3b82f6);
+}
+
+.team_group_name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.team_group_invites {
+  color: var(--text-secondary);
+}
+
+.team_row_actions {
+  display: flex;
+  gap: 10px;
+}
+
+.team_row_head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  line-height: 1.5;
+}
+
+.team_row_sender {
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+}
+
+.team_row_meta {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.team_row_title {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  line-height: 1.4;
+}
+
+.team_row_body {
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  max-width: 90ch;
+}
+
+/* Markdown inside rows: kill the default outer margins so rows stay tight. */
+.team_row_body > * :first-child,
+.team_row_body > :first-child {
+  margin-top: 0;
+}
+
+/* Markdown reading hierarchy (operator dm 116: "ok-ish but not super
+   readable-friendly"; generalized in backlog 0020). Long agent reports and
+   plan documents are DOCUMENTS, not one-liners — they need a real reading
+   hierarchy. Root causes fixed here:
+   (1) the panel-chat kit collapses h1-h5 to one size with no color/weight,
+       so headings inherited the body gray and vanished;
+   (2) the old `p { margin: 2px 0 }` override crushed paragraph rhythm;
+   (3) 2px list-item margins merged multi-line technical bullets into walls;
+   (4) `strong` inherited the gray body color, so bold never popped.
+   Scope: the shared `md_doc` class, applied at every markdown HOST via the
+   kit's className prop (message rows, file viewer, charter, summaries,
+   drawers, reports). All sizes ride the --font-size-* tokens (never raw
+   px — styles test). */
+.pc-md.md_doc {
+  line-height: 1.55;
+}
+
+.md_doc > :last-child {
+  margin-bottom: 0;
+}
+
+.md_doc h1,
+.md_doc h2,
+.md_doc h3,
+.md_doc h4,
+.md_doc h5 {
+  color: var(--text-primary);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.md_doc h1 {
+  font-size: var(--font-size-lg);
+  margin: 18px 0 8px;
+}
+
+/* h2 gets a hairline (GitHub convention, fable5 adversary): section breaks
+   stay scannable even though the size delta over body is small at chat
+   scale — h2 and h3 share the base size and differ by weight + rule. */
+.md_doc h2 {
+  font-size: var(--font-size-base);
+  margin: 16px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.md_doc h3 {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  margin: 14px 0 4px;
+}
+
+.md_doc h4,
+.md_doc h5 {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  margin: 12px 0 4px;
+}
+
+.md_doc p {
+  margin: 6px 0;
+}
+
+.md_doc li {
+  margin: 4px 0;
+}
+
+/* Multi-line bullets breathe. Keep the marker beside the paragraph edge and
+   give the item text one ordinary step — not a deep second gutter. */
+.md_doc ul,
+.md_doc ol {
+  margin: 6px 0;
+  margin-inline-start: 0;
+  padding-inline-start: 16px;
+}
+
+.md_doc ul ul,
+.md_doc ul ol,
+.md_doc ol ul,
+.md_doc ol ol {
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+
+/* ReactMarkdown wraps loose list text in paragraphs. Reset the first and
+   last paragraph margins so the marker aligns with the first text line. */
+.md_doc li > p:first-child {
+  margin-top: 0;
+}
+
+.md_doc li > p:last-child {
+  margin-bottom: 0;
+}
+
+/* Peer Markdown is descriptive, never a second network client. */
+.md_external_disabled {
+  color: var(--text-secondary);
+  text-decoration: underline dashed;
+  text-underline-offset: 2px;
+}
+
+.md_media_blocked {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.md_doc strong {
+  color: var(--text-primary);
+}
+
+.md_doc :not(pre) > code {
+  color: var(--text-primary);
+}
+
+.team_row_asks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+}
+
+.team_ask {
+  font-size: var(--font-size-xs);
+  color: var(--warning, #facc15);
+  background: rgba(250, 204, 21, 0.07);
+  border-left: 2px solid rgba(250, 204, 21, 0.4);
+  padding: 2px 8px;
+  border-radius: 0 6px 6px 0;
+}
+
+/* Reply rail: replies indent under the root with a connector line. */
+.team_replies {
+  margin: 2px 0 0 15px;
+  padding-left: 12px;
+  border-left: 2px solid var(--bg-tertiary);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.team_thread_tools {
+  display: flex;
+  gap: 8px;
+  padding-left: 32px;
+}
+
+.team_replies_more {
+  appearance: none;
+  border: 1px solid var(--bg-tertiary);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  padding: 3px 10px;
+  border-radius: 999px;
+  align-self: flex-start;
+  margin: 2px 0;
+}
+
+.team_replies_more:hover:not(:disabled) {
+  border-color: rgba(148, 163, 184, 0.5);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.team_row_expand {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 0 0;
+  font-size: var(--font-size-xs);
+  text-decoration: underline;
+  text-align: left;
+}
+
+.team_row_expand:hover:not(:disabled) {
+  color: var(--text-secondary);
+}
+
+.team_row_expand:disabled {
+  cursor: default;
+  opacity: 0.5;
+  text-decoration: none;
+}
+
+/* Inline AI summary block on a thread. */
+.team_summary {
+  margin: 4px 0 0 14px;
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  background: rgba(167, 139, 250, 0.06);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-sm);
+}
+
+.team_summary_head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.team_note {
+  font-size: var(--font-size-sm);
+}
+
+/* Degraded rail row (dm-99 F9): a failed channel load names itself instead
+   of leaving a blank pane. */
+.team_rail_degraded {
+  padding: 10px 12px;
+  line-height: 1.4;
+}
+
+/* Accent the message whose host-provided speech callback is running. */
+.team_row_rail .btn.team_speak_on {
+  color: var(--accent, #79c7ff);
+}
+
+/* Voice settings fields: label above control, consistent with the pane. */
+.settings_field {
+  display: grid;
+  gap: 3px;
+}
+
+.settings_field > select,
+.settings_field > input {
+  min-width: 0;
+}
+
+/* Status strip: renders only when something needs saying. */
+.team_statusstrip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 0 8px;
+}
+
+/* Post nudges: one-step inline confirms (void reply / untitled open). */
+.team_nudge {
+  font-size: var(--font-size-sm);
+  color: var(--warning, #facc15);
+  background: rgba(250, 204, 21, 0.07);
+  border: 1px solid rgba(250, 204, 21, 0.3);
+  border-radius: 8px;
+  padding: 6px 10px;
+  line-height: 1.5;
+}
+
+.team_nudge code {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+}
+
+/* Reply banner target: clickable jump back to the message. */
+.team_reply_target {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.team_reply_target:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.team_reply_ask_text {
+  overflow-wrap: anywhere;
+}
+
+/* New-channel inline form (rail header +). */
+.team_new_channel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  flex-wrap: wrap;
+}
+
+.team_new_channel input[type="text"],
+.team_new_channel input:not([type]) {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.team_new_channel label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+/* Rail section header (Direct messages). */
+.team_rail_section {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 8px 2px;
+}
+
+/* Members roster in About. */
+.team_members {
+  border-top: 1px solid var(--bg-tertiary);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.team_member_row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Invited-but-not-joined rows (operator dm 128): dimmed — a standing fact,
+   not yet a member; the chip names the wait. */
+.team_member_row.team_member_invited {
+  opacity: 0.65;
+}
+
+/* team_downvote_confirm retired with the members-tab vote thumbs
+   (operator dm 164). */
+
+.team_member_id {
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team_member_actions {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+/* Standing mission line under a roster row (operator ask 2026-08-19):
+   secondary identity, one line, full text in the title. */
+.team_member_mission {
+  margin: -2px 0 6px 34px; /* aligns under the name, past the avatar */
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team_mission_editor {
+  display: grid;
+  gap: 6px;
+  margin: 2px 0 10px 34px;
+}
+
+.team_mission_editor textarea {
+  min-height: 64px;
+  resize: vertical;
+  font-size: var(--font-size-sm);
+}
+
+.team_mission_editor_row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team_mission_editor_row .team_note {
+  margin-right: auto;
+}
+
+/* One transient toast, bottom-center: cap warnings and other must-see
+   notices. Click dismisses; it self-clears in 6s. */
+.team_toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--ui-border-1);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+/* Drop-to-deposit (operator ask 2026-08-19): the listing is the drop zone;
+   the active state must be unmistakable without stealing the accent. */
+.team_fs_dropzone {
+  position: relative;
+}
+
+.team_fs_dropzone.drop_active {
+  outline: 2px dashed var(--text-muted);
+  outline-offset: -6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.team_fs_drop_hint {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--bg-tertiary);
+}
+
+.team_fs_uploads {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.team_fs_uploads_head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.team_fs_upload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-sm);
+  min-width: 0;
+}
+
+.team_fs_upload_path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.team_fs_upload_size {
+  flex: 0 0 auto;
+}
+
+.team_fs_upload_ok {
+  color: var(--ok, #34d399);
+  font-weight: 700;
+}
+
+.team_fs_upload_err {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* New-file row in the Files drawer. */
+.team_fs_newfile {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.team_fs_newfile input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-sm);
+}
+
+/* File viewer: meta + Edit share one header row; the editor is a bounded
+   monospace surface with its actions pinned below. */
+.team_fileview_head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.team_fileedit_text {
+  display: block;
+  width: 100%;
+  min-height: min(48vh, 420px);
+  resize: vertical;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
+.team_fileedit_actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.team_chan_admin {
+  border-top: 1px solid var(--bg-tertiary);
+  padding-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+/* Live/polling dot in the filter bar. */
+.team_live_dot {
+  color: var(--text-muted);
+}
+
+.team_live_dot.on {
+  color: var(--success, rgb(74, 222, 128));
+}
+
+/* Composer is deliberately two-band: write first, then choose relay
+   controls. This keeps the message field usable on narrow screens. */
+.team_compose_row {
+  display: block;
+}
+
+.team_compose_control {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: var(--font-size-sm);
+  border-radius: 10px;
+}
+
+.team_kind_select {
+  width: 74px;
+}
+
+.team_dm_peer {
+  width: 170px;
+  min-width: 120px;
+}
+
+.team_compose_text {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 92px;
+  min-height: 92px;
+  max-height: 92px;
+  box-sizing: border-box;
+  resize: none;
+  overflow-y: auto;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  border-radius: 10px;
+}
+
+.team_compose_actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.team_compose_actions .team_dm_peer {
+  flex: 1 1 170px;
+  width: auto;
+}
+
+.team_compose_actions .team_attach_btn {
+  margin-left: auto;
+}
+
+.team_compose_actions .team_send {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 18px;
+}
+
+/* ONE control height for the action row. The row mixes buttons, native
+   selects, and a text-input fallback; each carried its own padding, border,
+   and min-height (36/40/44px by spec), so real browsers rendered a ragged
+   row (operator report 2026-08-19). The markup already tags every control
+   `team_compose_control` — this is the rule that class was waiting for.
+   Geometry only: each control keeps its own colors and borders (the global
+   border-box reset makes 40px total regardless of border). */
+.team_compose_actions .team_compose_control,
+.team_compose_actions .team_attach_btn,
+.team_compose_actions .team_send {
+  height: 40px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: var(--font-size-md);
+}
+
+.team_compose_actions button.team_compose_control,
+.team_compose_actions .team_attach_btn,
+.team_compose_actions .team_send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.team_compose_actions .team_send {
+  padding: 0 18px;
+}
+
+.team_ask_title {
+  width: 100%;
+  margin-bottom: 0;
+}
+
+/* Channel analyst pane. */
+.team_ai_pane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.team_ai_thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.team_ai_turn {
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-sm);
+}
+
+.team_ai_turn.user {
+  background: var(--info-subtle, rgba(96, 165, 250, 0.08));
+}
+
+.team_ai_turn.assistant {
+  background: var(--bg-tertiary);
+}
+
+.team_ai_role {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.team_composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--bg-tertiary);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Drag-and-drop attachments (operator dm 41 + dm 49): the whole Team page
+   is the drop zone; a full-pane overlay names the action while files hover.
+   pointer-events none so the drop event falls through to the page div. */
+.team_page {
+  position: relative;
+}
+
+.team_drop_overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(59, 130, 246, 0.08);
+  outline: 2px dashed var(--accent, #3b82f6);
+  outline-offset: -6px;
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+.team_drop_overlay_card {
+  padding: 12px 22px;
+  border-radius: 10px;
+  background: var(--bg-secondary, rgba(15, 23, 42, 0.92));
+  border: 1px solid var(--accent, #3b82f6);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+
+.team_composer_meta {
+  display: flex;
+  gap: 6px;
+}
+
+.team_composer_meta input {
+  flex: 1 1 auto;
+}
+
+.team_composer_meta select {
+  flex: 0 0 auto;
+}
+
+/* Reply mode banner: names the target + offers ask discharge. */
+.team_reply_banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  background: var(--info-subtle, rgba(96, 165, 250, 0.08));
+  border: 1px solid var(--info-border, rgba(96, 165, 250, 0.3));
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.team_reply_banner code {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+}
+
+.team_reply_asks {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.team_reply_asks label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+/* Channel about/charter panel (explicit open; charter renders as markdown). */
+.team_info {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--bg-tertiary);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40%;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.team_info_row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.team_info_purpose {
+  color: var(--text-secondary);
+}
+
+.team_info_charter {
+  border-top: 1px solid var(--bg-tertiary);
+  padding-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .team_layout,
+  .team_layout.with_drawer {
+    grid-template-columns: 1fr 30px;
+  }
+
+  .team_layout.with_drawer .team_thread_pane {
+    display: none;
+  }
+
+  .team_channels_pane {
+    max-height: 200px;
+  }
+}
+
+/* Operator decision gates (c1631): visibly a gate, structurally inert. */
+.board_card.gate {
+  border-color: rgba(250, 204, 21, 0.4);
+  background: rgba(250, 204, 21, 0.05);
+  cursor: pointer;
+}
+
+.board_card.gate:hover {
+  border-color: rgba(250, 204, 21, 0.6);
+}
+
+/* Setup callout: the one-panel "here is the fix" surface. */
+.setup_callout {
+  max-width: 720px;
+}
+
+.posture_table td {
+  vertical-align: middle;
+}
+
+/* Hub administration controls: stacked rows — name + state + action on
+   one line, the env detail BELOW it (the 5-column table forced a
+   horizontal scroll to reach any action; operator 2026-07-14). */
+.admin_row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.admin_row:last-child {
+  border-bottom: none;
+}
+
+.admin_row_top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin_row_name {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  min-width: 140px;
+}
+
+.admin_row_action {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.admin_row_detail {
+  margin-top: 3px;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.admin_row_detail code {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.setup_callout_pre {
+  margin: 10px 0;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.22);
+  white-space: pre-wrap;
+  font-size: var(--font-size-sm);
+}
+
+/* Stat strip (Executions): compact metric cards. */
+.stat_strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.stat_card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Toned stats carry a left accent + a whisper of their hue — number
+   color alone was invisible at a glance (operator: "old observer
+   style"; the board's chip/badge language is the reference). */
+.stat_card.tone_ok,
+.stat_card.tone_warn,
+.stat_card.tone_info,
+.stat_card.tone_danger {
+  border-left-width: 3px;
+}
+
+.stat_card.tone_ok {
+  border-left-color: var(--success, rgb(74, 222, 128));
+  background: linear-gradient(to right, color-mix(in srgb, var(--success, rgb(74, 222, 128)) 7%, transparent), transparent 55%), var(--bg-secondary);
+}
+
+.stat_card.tone_warn {
+  border-left-color: var(--warning, rgb(250, 204, 21));
+  background: linear-gradient(to right, color-mix(in srgb, var(--warning, rgb(250, 204, 21)) 7%, transparent), transparent 55%), var(--bg-secondary);
+}
+
+.stat_card.tone_info {
+  border-left-color: var(--info, rgb(96, 165, 250));
+  background: linear-gradient(to right, color-mix(in srgb, var(--info, rgb(96, 165, 250)) 8%, transparent), transparent 55%), var(--bg-secondary);
+}
+
+.stat_card.tone_danger {
+  border-left-color: var(--danger, rgb(248, 113, 113));
+  background: linear-gradient(to right, color-mix(in srgb, var(--danger, rgb(248, 113, 113)) 8%, transparent), transparent 55%), var(--bg-secondary);
+}
+
+.stat_value {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat_label {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.stat_card.tone_ok .stat_value {
+  color: var(--success, rgb(74, 222, 128));
+}
+
+.stat_card.tone_warn .stat_value {
+  color: var(--warning, rgb(250, 204, 21));
+}
+
+.stat_card.tone_info .stat_value {
+  color: var(--info, rgb(96, 165, 250));
+}
+
+.stat_card.tone_danger .stat_value {
+  color: var(--danger, rgb(248, 113, 113));
+}
+
+/* Data table: the track-record / registry look over pane surfaces.
+   UI font by default — mono belongs to id/hash CELLS, never the table
+   (the fully-mono track record was the operator's "font is horrible"
+   surface; aesthetics adversary P0). */
+.data_table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.data_table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  white-space: nowrap;
+}
+
+.data_table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+
+/* Prose cells WRAP: nowrap is for data (ids, counts, dates), not
+   sentences — nowrap prose truncated invisibly inside overflow-hidden
+   panes (adversary find). */
+.data_table td.td_prose {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+/* Capabilities rows: status + act (or honest owner note) — same stacked
+   grammar as the admin rows. */
+.cap_rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.cap_row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.cap_row:last-child {
+  border-bottom: none;
+}
+
+.cap_row_head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cap_row_name {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+}
+
+.cap_row_action {
+  margin-left: auto;
+}
+
+.cap_row_detail {
+  margin-top: 3px;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: 1.55;
+  max-width: 90ch;
+}
+
+/* Track record: fits WITHOUT wrapping dates/ids into character strips —
+   the agent id wraps at word boundaries, times stay whole, and the
+   ancillary count columns hide on narrower windows (adversary find:
+   blanket cell-wrapping shredded "7/14/2026, 9:15 PM" vertically). */
+/* Specificity note: must beat `.table_scroll .data_table td` (0,2,1). */
+.table_scroll .track_table th,
+.table_scroll .track_table td,
+.track_table th,
+.track_table td {
+  white-space: nowrap;
+}
+
+.table_scroll .track_table .td_agent,
+.track_table .td_agent {
+  white-space: normal;
+  overflow-wrap: break-word;
+  max-width: 220px;
+  font-size: var(--font-size-xs);
+}
+
+.track_table .td_time {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+@media (max-width: 1200px) {
+  .track_table .col_aux2 {
+    display: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .track_table .col_aux {
+    display: none;
+  }
+}
+
+.data_table tbody tr:hover {
+  background: var(--ui-overlay-bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.data_table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.page.page_scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.page_inner {
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px; /* matches page_pad so flat + constrained pages breathe alike */
+}
+
+.constrained {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.inbox_layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(280px, 420px) 1fr;
+  gap: 12px;
+}
+
+/* (Observer-era backlog toolbar rules removed 2026-07-13 — the page now
+   rides the shared page_toolbar + seg primitives.) */
+.backlog_count {
+  flex: 0 0 auto;
+}
+
+.backlog_batch_details {
+  flex: 0 0 auto;
+}
+
+
+.inbox_list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.inbox_item {
+  appearance: none;
+  text-align: left;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border-1, rgba(255, 255, 255, 0.10));
+  background: var(--ui-surface-1, rgba(0, 0, 0, 0.16));
+  padding: 10px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    transform 0.15s;
+}
+
+.inbox_item:hover:not(:disabled) {
+  border-color: var(--ui-border-2, rgba(255, 255, 255, 0.18));
+  background: var(--ui-surface-2, rgba(255, 255, 255, 0.06));
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+}
+
+.inbox_item.active {
+  border-color: var(--info-border, rgba(96, 165, 250, 0.32));
+  background: var(--info-subtle, rgba(96, 165, 250, 0.12));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.20);
+}
+
+.inbox_item_title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--font-size-md);
+  line-height: 1.2;
+}
+
+.item_title_text {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  letter-spacing: 0.1px;
+}
+
+.item_summary_text {
+  margin-top: 6px;
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+  color: var(--text-secondary);
+  overflow: hidden;
+  max-height: calc(1.35em * 3);
+}
+
+.item_summary_text .pc-md {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.item_summary_text .pc-md_p,
+.item_summary_text .pc-md_ul,
+.item_summary_text .pc-md_ol {
+  margin: 0;
+}
+
+.item_summary_text .pc-md_ul,
+.item_summary_text .pc-md_ol {
+  margin-left: 16px;
+}
+
+.inbox_item_meta {
+  margin-top: 6px;
+  font-size: var(--font-size-xs);
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+
+.exec_log_scroll {
+  margin-top: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.exec_event {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 2px solid rgba(96, 165, 250, 0.18);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.10);
+}
+
+.exec_event.ok {
+  border-left-color: var(--success-border, rgba(34, 197, 94, 0.32));
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.exec_event.error {
+  border-left-color: var(--error-border, rgba(239, 68, 68, 0.32));
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.exec_event_summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.exec_event_summary:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.exec_event_summary::-webkit-details-marker {
+  display: none;
+}
+
+.exec_event_summary::marker {
+  content: "";
+}
+
+.exec_event_main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+}
+
+.exec_event_right {
+  font-size: var(--font-size-xs);
+}
+
+.exec_event_body {
+  padding: 0 10px 10px 10px;
+}
+
+.exec_event_meta {
+  align-items: center;
+  gap: 8px;
+}
+
+.pane .pc-md :not(pre) > code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.inbox_detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.inbox_detail_header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.inbox_detail_title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.inbox_detail_actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.inbox_list_ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.inbox_markdown {
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  padding-top: 10px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid var(--muted-border, rgba(148, 163, 184, 0.22));
+  background: var(--ui-chip-bg, rgba(148, 163, 184, 0.10));
+  color: var(--ui-chip-text, rgba(226, 232, 240, 0.92));
+  font-size: var(--font-size-xxs);
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-transform: lowercase;
+  line-height: 1.1;
+}
+
+.pill.pending {
+  border-color: var(--warning-border, rgba(245, 158, 11, 0.35));
+  background: var(--warning-subtle, rgba(245, 158, 11, 0.12));
+  color: var(--warning, rgba(245, 158, 11, 0.96));
+}
+
+.pill.approved {
+  border-color: var(--success-border, rgba(34, 197, 94, 0.35));
+  background: var(--success-subtle, rgba(34, 197, 94, 0.12));
+  color: var(--success, rgba(34, 197, 94, 0.96));
+}
+
+.pill.rejected {
+  border-color: var(--error-border, rgba(239, 68, 68, 0.35));
+  background: var(--error-subtle, rgba(239, 68, 68, 0.12));
+  color: var(--error, rgba(239, 68, 68, 0.96));
+}
+
+.pill.deferred {
+  border-color: var(--info-border, rgba(96, 165, 250, 0.35));
+  background: var(--info-subtle, rgba(96, 165, 250, 0.12));
+  color: var(--info, rgba(96, 165, 250, 0.96));
+}
+
+.pill.unparsed {
+  border-color: var(--muted-border, rgba(148, 163, 184, 0.28));
+  background: rgba(148, 163, 184, 0.10);
+  color: rgba(148, 163, 184, 0.95);
+}
+
+
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.col {
+  flex: 1 1 320px;
+  min-width: 280px;
+}
+
+
+
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0;
+}
+
+.section_title {
+  margin-top: 2px;
+  margin-bottom: 2px;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.section_divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 6px 0;
+}
+
+.field label {
+  font-size: var(--font-size-xxs);
+  color: var(--muted);
+}
+
+.field input:not([type="checkbox"]):not([type="radio"]),
+.field textarea,
+.field select {
+  width: 100%;
+}
+
+.field input:focus,
+.field textarea:focus,
+.field select:focus {
+  border-color: var(--accent);
+}
+
+.field input[type="checkbox"],
+.field input[type="radio"] {
+  width: auto;
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 86px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.btn {
+  /* Match AbstractFlow button styling (Observer uses `.btn` extensively). */
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--ui-overlay-border, rgba(255, 255, 255, 0.14));
+  background: var(--ui-overlay-bg, rgba(0, 0, 0, 0.18));
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--font-size-md);
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    transform 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--ui-overlay-bg-hover, rgba(255, 255, 255, 0.08));
+  border-color: var(--ui-border-2, rgba(255, 255, 255, 0.18));
+  transform: translateY(-1px);
+}
+
+.btn.btn_icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.btn.btn_icon svg {
+  flex: 0 0 auto;
+}
+
+.btn.btn_icon.is_loading svg {
+  animation: btn_icon_spin 0.9s linear infinite;
+}
+
+@keyframes btn_icon_spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: var(--text-primary);
+  border-color: var(--accent-border, rgba(233, 69, 96, 0.35));
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: #ff6b81;
+  border-color: rgba(233, 69, 96, 0.55);
+}
+
+.btn.danger {
+  background: var(--error-subtle, rgba(239, 68, 68, 0.12));
+  color: var(--error);
+  border-color: var(--error-border, rgba(239, 68, 68, 0.35));
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.55);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.muted {
+  /* `muted` in Flow means low-contrast helper text. */
+  color: var(--text-muted);
+}
+
+.multi_select {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.multi_select_row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.multi_select_row > .btn:first-child {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.multi_select_panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.multi_select_list {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.multi_select_item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(17, 24, 39, 0.35);
+  cursor: pointer;
+  user-select: none;
+}
+
+.multi_select_item.checked {
+  border-color: rgba(96, 165, 250, 0.24);
+  background: rgba(96, 165, 250, 0.08);
+}
+
+/* Selected items shown as chips */
+.multi_select_chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.multi_select_chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(96, 165, 250, 0.10);
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  color: rgba(96, 165, 250, 0.95);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xxs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.multi_select_chip:hover {
+  background: rgba(96, 165, 250, 0.18);
+  border-color: rgba(96, 165, 250, 0.35);
+}
+
+.multi_select_chip_x {
+  font-size: calc(11px * var(--font-scale));
+  line-height: 1;
+  opacity: 0.6;
+  margin-left: 2px;
+}
+
+.multi_select_chip:hover .multi_select_chip_x {
+  opacity: 1;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--ui-chip-border, var(--border-default));
+  background: var(--ui-chip-bg, rgba(0, 0, 0, 0.22));
+  color: var(--ui-chip-text, var(--text-primary));
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+}
+
+.chip.backlog_path_chip {
+  gap: 6px;
+}
+
+.chip_icon_btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.85;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+
+.chip_icon_btn:hover:not(:disabled) {
+  opacity: 1;
+  transform: translateY(-0.5px);
+}
+
+.chip_icon_btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.chip_icon_btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chip.muted {
+  color: var(--text-muted);
+}
+
+.chip.danger {
+  border-color: var(--error-border, rgba(239, 68, 68, 0.35));
+  background: var(--error-subtle, rgba(239, 68, 68, 0.12));
+  color: var(--error);
+}
+
+.chip.ok {
+  border-color: var(--success-border, rgba(34, 197, 94, 0.35));
+  background: var(--success-subtle, rgba(34, 197, 94, 0.12));
+  color: var(--success);
+}
+
+.chip.warn {
+  border-color: var(--warning-border, rgba(245, 158, 11, 0.35));
+  background: var(--warning-subtle, rgba(245, 158, 11, 0.12));
+  color: var(--warning);
+}
+
+.chip.task {
+  border-color: rgba(250, 204, 21, 0.35);
+  background: rgba(250, 204, 21, 0.12);
+  color: rgba(250, 204, 21, 0.96);
+}
+
+.chip.info {
+  border-color: var(--info-border, rgba(96, 165, 250, 0.35));
+  background: var(--info-subtle, rgba(96, 165, 250, 0.12));
+  color: var(--info);
+}
+
+/* Compact select for inline use */
+
+
+
+.tab_bar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+/* Mindmap (KG observability) */
+
+.backlog_chat_thread_small {
+  max-height: 220px;
+}
+
+.drawer_chat_thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.backlog_edit_sticky {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.tab {
+  appearance: none;
+  border: 1px solid var(--ui-overlay-border, rgba(255, 255, 255, 0.14));
+  background: var(--ui-overlay-bg, rgba(0, 0, 0, 0.18));
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    transform 0.15s;
+}
+
+.tab:hover {
+  background: var(--ui-overlay-bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.tab.active {
+  color: var(--text-primary);
+  background: var(--accent);
+  border-color: var(--accent-border, rgba(233, 69, 96, 0.35));
+  font-weight: 600;
+}
+
+.modal_backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px 16px;
+  z-index: 2000;
+}
+
+.modal_backdrop.fullscreen {
+  padding: 0;
+  align-items: stretch;
+}
+
+.modal_panel {
+  width: min(820px, 100%);
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-card, rgba(15, 23, 42, 0.92));
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.45);
+}
+
+.modal_panel.fullscreen {
+  width: 100%;
+  height: 100vh;
+  max-height: 100vh;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal_header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-card, rgba(15, 23, 42, 0.92));
+  border-bottom: 1px solid var(--ui-border-1, rgba(148, 163, 184, 0.15));
+}
+
+.modal_title {
+  font-size: var(--font-size-base);
+  font-weight: 700;
+}
+
+.modal_body {
+  padding: 14px;
+}
+
+.modal_panel.fullscreen .modal_body {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.modal_footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-card, rgba(15, 23, 42, 0.92));
+  border-top: 1px solid var(--ui-border-1, rgba(148, 163, 184, 0.15));
+}
+
+.advisor_toggle {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1400;
+  border: 1px solid var(--border);
+  border-right: none;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  padding: 10px 10px;
+  border-radius: 12px 0 0 12px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
+}
+
+.advisor_toggle:hover {
+  background: rgba(0, 0, 0, 0.30);
+}
+
+.advisor_toggle.open {
+  border-color: var(--border-accent);
+  background: rgba(96, 165, 250, 0.10);
+}
+
+.advisor_toggle_label {
+  display: inline-block;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.drawer_backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  z-index: 2001;
+}
+
+.drawer_panel {
+  width: clamp(560px, 42vw, 760px);
+  max-width: 92vw;
+  height: 100%;
+  border-left: 1px solid var(--border);
+  background: var(--bg-card, rgba(15, 23, 42, 0.92));
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+}
+
+.drawer_header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--ui-border-1, rgba(148, 163, 184, 0.15));
+}
+
+.drawer_title {
+  font-size: var(--font-size-base);
+  font-weight: 800;
+}
+
+.drawer_body {
+  padding: 12px 12px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.drawer_footer {
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+@media (pointer: coarse) {
+  .drawer_panel textarea {
+    font-size: var(--font-size-lg);
+  }
+}
+
+@media (max-width: 700px) {
+  .advisor_toggle {
+    top: 50%;
+    bottom: auto;
+    right: env(safe-area-inset-right, 0px);
+    transform: translateY(-50%);
+    border-right: none;
+    border-radius: 12px 0 0 12px;
+    padding: 12px 10px;
+  }
+
+  .advisor_toggle_label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+  }
+
+  .drawer_panel {
+    width: 100%;
+    border-left: none;
+  }
+}
+
+@media (max-width: 900px) {
+
+  .inbox_layout {
+    grid-template-columns: 1fr;
+  }
+
+  /* Prevent iOS Safari auto-zoom on focus (needs >= 16px).
+     Scope to touch devices so desktop narrow windows keep normal sizing. */
+  @media (pointer: coarse) {
+  .field input,
+  .field textarea,
+  .field select {
+    font-size: var(--font-size-lg);
+    }
+  }
+}
+
+/* Narrow windows: filters wrap instead of clipping behind a hidden
+   scrollbar (Resolved/@me were silently unreachable at 1100px). */
+@media (max-width: 1180px) {
+  .team_filterbar .seg.seg_scroll {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+}
+
+/* Members chip in the thread header (operator c2240: a visible BUTTON,
+   not an icon-only affordance). */
+.team_members_chip {
+  cursor: pointer;
+  border: 1px solid var(--border-secondary);
+  background: transparent;
+}
+
+.team_members_chip:hover {
+  border-color: var(--accent);
+}
+
+/* Armed destructive act (two-step ban confirm). */
+.team_row_expand.team_danger {
+  color: var(--danger, rgb(248, 113, 113));
+  font-weight: 600;
+}
+
+/* DM trash on hover (operator dm 14): the row reveals a remove control on
+   mouseover; two-step (trash → ✕) so a stray click never drops a chat. */
+.team_dm_row {
+  position: relative;
+}
+
+.team_dm_trash {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  margin-left: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.team_dm_row:hover .team_dm_trash,
+.team_dm_trash:focus-visible,
+.team_dm_trash.arming {
+  display: inline-flex;
+}
+
+.team_dm_trash:hover:not(:disabled),
+.team_dm_trash.arming {
+  color: var(--danger, rgb(248, 113, 113));
+  background: var(--bg-tertiary);
+}
+
+/* Message attachments (agora 0091): pending chips in the composer + the
+   delivered attachments on message rows. */
+.team_attach_pending {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.team_attach_chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  text-decoration: none;
+  max-width: 260px;
+}
+
+.team_attach_chip .team_attach_name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+/* Pending-chip preview button (operator dm 116): the clickable body of the
+   chip — inherits the chip look, only signals interactivity on hover. */
+.team_attach_open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.team_attach_open:hover .team_attach_name {
+  text-decoration: underline;
+}
+
+/* fs-path chips on messages (operator dm 69): same chip language as
+   attachments, hover names the act. Wider cap — fs paths are longer than
+   filenames and the PATH is the information. */
+.team_fs_chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.team_fs_chip {
+  cursor: pointer;
+  max-width: 420px;
+}
+
+.team_fs_chip:hover {
+  border-color: var(--accent, #3b82f6);
+  color: var(--text-primary);
+}
+
+/* Work-id chips (S3 team↔board join): the glyph carries the accent so a
+   work mention reads distinct from a file mention at a glance. */
+.team_work_chip .team_work_glyph {
+  color: var(--accent, #3b82f6);
+}
+
+/* Retracted messages (operator dm 88 + agora 0097): dimmed tombstone —
+   the hub already serves the redacted body; the row just reads as what
+   it is: a withdrawn word, present for transcript integrity only. */
+.team_row.retracted {
+  opacity: 0.45;
+}
+.team_row.retracted .team_row_body {
+  font-style: italic;
+}
+
+/* Per-message reactions (operator dm 82): count beside the thumb glyph in
+   the rail; the always-visible tally sits in the row header. */
+.team_thumb .team_thumb_count {
+  font-size: max(9px, calc(var(--font-size-xs) * 0.8));
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.team_reaction_tally {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: max(9px, calc(var(--font-size-xs) * 0.85));
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.team_reaction_tally.pos {
+  color: var(--ok, #4ade80);
+}
+.team_reaction_tally.neg {
+  color: var(--danger, #f87171);
+}
+
+/* Entity Skills panel (c3038 ask 2): full-width management surface below
+   the entity card grid — kit matrix styles ride theme.css. */
+.entity_skills_panel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.entity_skills_head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.entity_skills_resolved {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.entity_skills_actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* The file-viewer modal earns more room than the generic 820px modal —
+   plan documents are the primary content read there (operator dm 69:
+   "read the file in good conditions"). Scoped by :has so other modals
+   keep their geometry. */
+.modal_panel:has(.team_fileview_md),
+.modal_panel:has(.team_fileview_text) {
+  width: min(1020px, 100%);
+}
+
+.team_fileview_md,
+.team_fileview_text {
+  max-height: 76vh;
+}
+
+a.team_attach_dl:hover {
+  border-color: var(--accent);
+}
+
+.team_attach_x {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.team_attach_x:hover {
+  color: var(--danger, rgb(248, 113, 113));
+}
+
+.team_attach_btn {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.team_attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.team_attach_img_link {
+  display: inline-flex;
+  position: relative;
+}
+
+.team_attach_img {
+  max-width: 260px;
+  max-height: 200px;
+  border-radius: 8px;
+  border: 1px solid var(--border-secondary);
+  object-fit: contain;
+  background: var(--bg-tertiary);
+}
+
+/* Channel Files browser + shared file viewer (operator dm 35/53). All
+   drawers fill their grid column; width is the grid's decision. */
+.team_files_pane,
+.team_members_pane,
+.team_lb_pane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Reputation leaderboard drawer (operator dm 12; agora 0094). Rows share
+   one fixed grid with the legend so scores read as columns; rank medals
+   tint the top three; +/− cells carry the ok/danger hues already used by
+   status badges elsewhere on the page. */
+.team_lb_body {
+  padding: 6px 0 10px;
+}
+
+.team_lb_scope {
+  display: inline-flex;
+  gap: 0;
+  margin-right: 8px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.team_lb_scope_btn {
+  padding: 3px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.team_lb_scope_btn.active {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 22%, var(--bg-secondary));
+  color: var(--text-primary);
+}
+
+.team_lb_scope_btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.team_lb_legend,
+.team_lb_row {
+  display: grid;
+  /* Flexible tracks whose MINIMUMS sum well under the drawer's minimum
+     width: the table must always FIT — clipped or scrolling columns are
+     forbidden on this page (operator dm 58). Extra drawer width flows
+     into the agent name first, then the score columns. */
+  /* 10 tracks since agora-0122: rank, avatar, agent, total, 4 axes, and
+     the message-ratings fold (Msgs). Total's minimum is 56px so a real
+     score cell (`+9 12↑3↓`) NEVER truncates — a clipped number is data
+     loss, the P0 the design review flagged. Minimum budget: tracks 382
+     + 9 gaps (54) + padding (24) = 460 = the wide drawer's minimum — the
+     table must always FIT (dm 58); numbers keep their width, headers may
+     ellipsize (full names ride the tooltips). */
+  grid-template-columns: 16px 20px minmax(70px, 1.5fr) minmax(56px, 0.9fr) repeat(4, minmax(44px, 0.8fr)) minmax(44px, 0.9fr);
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+}
+
+/* Blowout guard: a grid item's implicit min-width is its content — one
+   long header or score would widen its track past the drawer. Every cell
+   may shrink and ellipsize instead. */
+.team_lb_legend > span,
+.team_lb_row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team_lb_legend {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  border-bottom: 1px solid var(--border-secondary);
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  z-index: 1;
+}
+
+.team_lb_legend_total,
+.team_lb_legend_axis,
+.team_lb_total,
+.team_lb_axis {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.team_lb_row {
+  border-bottom: 1px solid var(--border-secondary);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.team_lb_row:hover,
+.team_lb_row.open {
+  background: var(--bg-tertiary);
+}
+
+.team_lb_rank {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-align: center;
+}
+
+/* Top-three get a medal dot with a soft glow instead of a bare digit —
+   gold/silver/bronze, quiet enough for the dark theme. */
+.team_lb_rank.top1,
+.team_lb_rank.top2,
+.team_lb_rank.top3 {
+  font-size: var(--font-size-xs);
+}
+
+.team_lb_rank.top1 {
+  color: #f6c453;
+  text-shadow: 0 0 6px rgba(246, 196, 83, 0.5);
+}
+
+.team_lb_rank.top2 {
+  color: #cfd6e0;
+  text-shadow: 0 0 6px rgba(207, 214, 224, 0.45);
+}
+
+.team_lb_rank.top3 {
+  color: #d69a6b;
+  text-shadow: 0 0 6px rgba(214, 154, 107, 0.45);
+}
+
+/* team_lb_mine retired (operator dm 150): the per-row stance thumb read
+   as the AGENT's self-vote; who-stands-where lives in the expanded
+   attributed-votes detail. */
+
+/* team_stance_mark retired (operator dm 119): reactions are per message,
+   so an author-stance glyph next to the sender name read as a message mark
+   and confused. Author trust renders in Members drawer + Leaderboard. */
+
+.team_lb_agent {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.team_lb_total {
+  font-weight: 700;
+}
+
+.team_lb_total.pos,
+.team_lb_axis.pos,
+.team_lb_vote_val.pos {
+  color: var(--success, #22c55e);
+}
+
+.team_lb_total.neg,
+.team_lb_axis.neg,
+.team_lb_vote_val.neg {
+  color: var(--danger, #ef4444);
+}
+
+.team_lb_axis {
+  color: var(--text-secondary);
+}
+
+.team_lb_detail {
+  padding: 8px 12px 12px 48px;
+  border-bottom: 1px solid var(--border-secondary);
+  background: color-mix(in srgb, var(--bg-tertiary) 55%, var(--bg-secondary));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.team_lb_cast {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.team_lb_cast_label {
+  font-weight: 600;
+}
+
+.team_lb_cast_axis {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+}
+
+.team_lb_cast_axis_name {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.team_lb_vote {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  border-radius: 999px;
+  color: var(--text-tertiary);
+}
+
+.team_lb_vote.up:hover:not(:disabled) {
+  color: var(--success, #22c55e);
+  background: color-mix(in srgb, var(--success, #22c55e) 16%, transparent);
+}
+
+.team_lb_vote.down:hover:not(:disabled) {
+  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 16%, transparent);
+}
+
+.team_lb_vote:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.team_lb_note {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+}
+
+.team_lb_note::placeholder {
+  color: var(--text-tertiary);
+}
+
+.team_lb_error {
+  color: var(--danger, #ef4444);
+  font-size: var(--font-size-xs);
+}
+
+.team_lb_vote_row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-xs);
+  padding: 3px 0;
+  min-width: 0;
+}
+
+.team_avatar_sm {
+  width: 16px;
+  height: 16px;
+  font-size: max(9px, calc(var(--font-size-xs) * 0.8));
+  margin-top: 0;
+}
+
+.team_lb_vote_rater {
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.team_lb_vote_axis {
+  color: var(--text-tertiary);
+  flex: 0 0 auto;
+}
+
+.team_lb_vote_val {
+  flex: 0 0 auto;
+  vertical-align: -1px;
+}
+
+.team_lb_vote_note {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.team_lb_footnote {
+  padding: 10px 12px 0;
+  font-size: var(--font-size-xs);
+}
+
+/* Members drawer body scrolls (roster + blocked + retired + lifecycle can
+   exceed the column height). */
+.team_members_body {
+  overflow-y: auto;
+  padding: 10px 12px;
+}
+
+.team_file_row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.team_file_row:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+
+/* Split rows (delete affordance, operator ask 2026-08-19): the row is a
+   container; opening lives on the inner button so the trash is a REAL
+   separate target, never a nested interactive element. */
+.team_file_row_split {
+  padding: 0;
+  cursor: default;
+}
+
+.team_file_row_split:hover {
+  background: var(--bg-tertiary);
+}
+
+.team_file_open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.team_file_open:hover:not(:disabled) {
+  background: transparent; /* the row container carries the hover wash */
+}
+
+.team_file_trash {
+  flex: 0 0 auto;
+  margin-right: 6px;
+  color: var(--text-muted);
+  /* Quiet until pointed at — visible enough to discover, calm enough not
+     to read as 16 delete warnings in a listing. Focus keeps it reachable. */
+  opacity: 0.55;
+}
+
+.team_file_row_split:hover .team_file_trash,
+.team_file_trash:focus-visible {
+  opacity: 1;
+}
+
+.team_file_trash:hover:not(:disabled) {
+  color: var(--danger, #f87171);
+  background: rgba(248, 113, 113, 0.12);
+}
+
+/* Destructive modal action: red is reserved for exactly this. */
+.btn.btn_danger {
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.45);
+  color: var(--danger, #f87171);
+}
+
+.btn.btn_danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.28);
+  color: var(--text-primary);
+}
+
+.team_del_path {
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.team_file_path {
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.team_file_desc {
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team_file_meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* One message that fails to render (operator dm 55/57): a contained
+   fallback row, raw text preserved, never a blank page. */
+.team_row_broken {
+  border-left: 2px solid var(--warning, #eab308);
+  background: rgba(234, 179, 8, 0.05);
+}
+
+.team_row_raw {
+  margin: 4px 0 0;
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
+.team_fileview_md {
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.team_fileview_text {
+  max-height: 70vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.team_fileview_img {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.team_fileview_dl {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+/* Mermaid diagrams in the file viewer (iteration-3 pathway graph): the
+   svg scales to the panel; failures show labeled source, never a blank. */
+.team_mermaid {
+  overflow: auto;
+  padding: 8px 0;
+}
+.team_mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+.team_mermaid_src {
+  font-size: var(--font-size-xs);
+  background: var(--bg-tertiary);
+  padding: 8px;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+/* Claim facts panel (dm 103): compact modal for hub-tracked board cards. */
+.board_claim_panel {
+  max-width: 560px;
+}
+.board_claim_facts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: var(--font-size-sm);
+}
+
+/* Sticky-debt pill (dm 111): amber, distinct from the blue "new" — this
+   one does not clear on click, only on answering. */
+.team_chip_debt {
+  font-size: max(9px, calc(var(--font-size-xs) * 0.8));
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #0b0d12;
+  background: var(--warning, #fbbf24);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+/* Decline-on-the-record next to the debt pill (operator dm 147a): quiet
+   outline until armed — the ARMED state must read as a real act. */
+.team_chip_decline {
+  font-size: max(9px, calc(var(--font-size-xs) * 0.8));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 16px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.team_chip_decline:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-primary);
+}
+.team_chip_decline.armed {
+  color: #0b0d12;
+  background: var(--warning, #fbbf24);
+  border-color: var(--warning, #fbbf24);
+}
+
+/* Work-activity panel (dm 110): discussion + receipts on hub-backed cards. */
+.board_activity_panel {
+  max-width: 640px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.board_activity_section {
+  border-top: 1px solid var(--border-primary);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.board_activity_msg {
+  padding: 6px 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  font-size: var(--font-size-sm);
+}
+.board_activity_msg_head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: var(--font-size-xs);
+}
+.board_activity_msg_head .team_row_expand {
+  margin-left: auto;
+}
+.board_activity_msg_title {
+  font-weight: 600;
+  margin-top: 2px;
+}
+.board_activity_msg_body {
+  margin-top: 2px;
+  font-size: var(--font-size-xs);
+}
+
+/* Operator desk drawer (item 0017): rows of what waits on the human. */
+.team_desk_row {
+  padding: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--font-size-sm);
+}
+.team_desk_row_head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: var(--font-size-xs);
+}
+
+/* Origin label: the desk is hub-wide, each row names its channel/DM. */
+.team_desk_row_chan {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 45%;
+}
+.team_desk_row_what {
+  font-weight: 600;
+}
+.team_desk_row_needed {
+  font-size: var(--font-size-xs);
+}
+
+/* Satisfied queue rows (live /desk contract): the hub observed the
+   done-condition — rendered dim, they self-clear on the next compute. */
+.team_desk_row.satisfied {
+  opacity: 0.6;
+}
+
+.team_desk_satisfied_head {
+  margin-top: 10px;
+  padding: 0 2px 4px;
+}
+
+/* Desk tab badge (agora dm#33 point 1): visible without opening the
+   drawer — amber = items wait on the operator; green (ok) = satisfied
+   queue items he can close. Rides the vertical trapeze tab, so the badge
+   resets to horizontal for readability. */
+.team_desk_tab_badge {
+  writing-mode: horizontal-tb;
+  font-size: max(10px, calc(var(--font-size-xs) * 0.9));
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 999px;
+  font-family: var(--font-mono, monospace);
+  background: rgba(250, 204, 21, 0.18);
+  color: var(--warning, #facc15);
+  margin-top: 6px;
+}
+
+.team_desk_tab_badge.ok {
+  background: rgba(34, 197, 94, 0.16);
+  color: var(--success, #22c55e);
+}
+
+/* Top-voted view (laurent dm#137): flat hub-ranked rows with a rank line. */
+.team_top_row {
+  border-bottom: 1px solid var(--border-secondary);
+  padding-bottom: 4px;
+}
+.team_top_rank_line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 0;
+}
+.team_top_rank {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--text-tertiary);
+}
+
+/* Hub-wide search (agora-0132, hub ≥ 0.12.44): the box lives in the
+   filterbar; the grouped report replaces the thread list until closed.
+   Marks are client-drawn from code-point offsets — the hub serves no
+   HTML, ever. */
+.team_search_bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 220px;
+  min-width: 120px;
+}
+.team_search_input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  padding: 4px 8px;
+}
+.team_search_input:focus {
+  outline: none;
+  border-color: var(--accent, #6ea8fe);
+}
+.team_search_close {
+  flex: 0 0 auto;
+}
+.team_search_results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 16px;
+}
+.team_search_relaxed {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--warning, #fbbf24);
+  background: color-mix(in srgb, var(--warning, #fbbf24) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning, #fbbf24) 40%, transparent);
+  cursor: help;
+}
+.team_search_meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--font-size-xs);
+  flex-wrap: wrap;
+}
+/* Semantic-search adoption (dm#126): degraded notice is visible AND
+   copyable (user-select) — receipts quote it; mode chip is muted meta. */
+.team_search_notice {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--warning, #fbbf24) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning, #fbbf24) 30%, transparent);
+  user-select: text;
+  cursor: text;
+}
+.team_search_mode {
+  color: var(--text-tertiary);
+  font-size: max(9px, calc(var(--font-size-xs) * 0.9));
+}
+/* Rated lens chips (agora-0134 v2): compact seg inside the meta row. */
+.team_search_rated .seg_btn {
+  padding: 2px 8px;
+  font-size: max(9px, calc(var(--font-size-xs) * 0.9));
+}
+.team_search_scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+.team_search_section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.team_search_section_head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 0 2px;
+  border-bottom: 1px solid var(--border-secondary);
+}
+.team_search_section_label {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.team_search_hit {
+  padding: 6px 8px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.team_search_hit.clickable {
+  cursor: pointer;
+}
+.team_search_hit.clickable:hover {
+  background: var(--bg-secondary);
+}
+.team_search_hit_head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--font-size-xs);
+}
+.team_search_kind {
+  color: var(--text-tertiary);
+  font-size: max(9px, calc(var(--font-size-xs) * 0.85));
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.team_search_chan {
+  color: var(--text-tertiary);
+}
+.team_search_sender {
+  font-weight: 600;
+}
+.team_search_status {
+  color: var(--warning, #fbbf24);
+  font-weight: 700;
+}
+.team_search_tally {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-tertiary);
+}
+.team_search_time {
+  margin-left: auto;
+  font-size: max(9px, calc(var(--font-size-xs) * 0.85));
+  white-space: nowrap;
+}
+.team_search_title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.team_search_snippet {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.team_search_snippet mark {
+  background: color-mix(in srgb, var(--accent, #6ea8fe) 28%, transparent);
+  color: var(--text-primary);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.team_search_ref {
+  font-size: max(9px, calc(var(--font-size-xs) * 0.85));
+}
+.team_search_empties {
+  font-size: max(9px, calc(var(--font-size-xs) * 0.85));
+  color: var(--text-tertiary);
+  padding-top: 4px;
+}
+.team_search_more {
+  align-self: flex-start;
+}
+
+/* Raw uncollapsed vote counts beside the global score (dm#145 ruling):
+   small — the score stays the headline, the raw tally makes every
+   up/down visible. Downvotes render RED whenever any exist (operator
+   dm 153: displeasure must not hide in a muted tint). */
+.team_lb_rawvotes {
+  font-size: max(9px, calc(var(--font-size-xs) * 0.85));
+  font-weight: 500;
+  white-space: nowrap;
+}
+.team_lb_rawvotes .rv_up {
+  color: var(--text-tertiary);
+}
+.team_lb_rawvotes .rv_down {
+  color: var(--text-tertiary);
+}
+.team_lb_rawvotes .rv_down_hot {
+  color: var(--danger, #ef4444);
+  font-weight: 700;
+}
+
+/* team_vote_as retired with the members-tab vote thumbs (operator dm 164). */
+
+/* Hub delegation section (operator dm 154) — Members drawer. */
+.team_delegation {
+  border-top: 1px solid var(--border-secondary);
+  margin-top: 10px;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.team_delegation_head {
+  font-weight: 600;
+}
+.team_delegation_row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.team_delegation_powers {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.team_delegation_assign {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.team_delegation_powers_pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.team_delegation_power {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}

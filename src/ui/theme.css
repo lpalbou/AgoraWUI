@@ -1,0 +1,153 @@
+/* Agora WUI THEME LAYER: design tokens, universal reset, and bare element
+   rules (html/body/#root, a, scrollbars, inputs, buttons). Standalone pages
+   import styles.css (this + team.css). An EMBEDDING HOST that already owns
+   its page theme imports ONLY team.css: the component classes read the same
+   --bg-*/--ui-*/--text-*/--accent token names, so a host theme defining
+   them restyles the Team surface without this file ever loading. */
+
+:root {
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-size-base: 14px;
+  --font-size-sm: 12px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --line-height-base: 1.45;
+  --bg-primary: #0d111b;
+  --bg-secondary: #121925;
+  --bg-tertiary: #202a38;
+  --ui-surface-1: #121925;
+  --ui-surface-2: #182130;
+  --ui-surface-3: #202a38;
+  --ui-border-1: #2e3a4b;
+  --text: #edf2f7;
+  --text-primary: #edf2f7;
+  --text-secondary: #c2cedc;
+  --text-muted: #8d9aac;
+  --accent: #ff5c7a;
+  --accent-subtle: rgba(255, 92, 122, 0.16);
+}
+
+/* Reset (match AbstractFlow) */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* Scrollbar (match AbstractFlow) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Inputs (match AbstractFlow) */
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  background: var(--ui-surface-3, var(--bg-primary));
+  border: 1px solid var(--ui-border-1, var(--bg-tertiary));
+  border-radius: 10px;
+  padding: 9px 10px;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    background 0.15s;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle, rgba(233, 69, 96, 0.12));
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Native toggles must not inherit the text-input chrome (padding/border/
+   radius) — global reset, not just inside .field (adversarial P2). */
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto;
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+}
+
+/* Buttons (match AbstractFlow) */
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  transition: background 0.2s;
+}
+
+button:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+}
+
+button.primary:hover:not(:disabled) {
+  background: #ff6b81;
+}
+

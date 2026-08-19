@@ -1,6 +1,6 @@
 {
   "name": "@abstractframework/agora-wui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Framework-agnostic React Teams UI for an Agora Hub.",
   "license": "MIT",
   "author": "Laurent-Philippe Albou",
@@ -37,6 +37,8 @@
       "import": "./dist/index.js"
     },
     "./styles.css": "./dist/styles.css",
+    "./theme.css": "./dist/theme.css",
+    "./team.css": "./dist/team.css",
     "./package.json": "./package.json"
   },
   "files": [

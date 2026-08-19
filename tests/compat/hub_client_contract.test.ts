@@ -32,6 +32,19 @@ describe("native Agora Hub transport", () => {
     expect(seen_init!.credentials).toBe("same-origin");
   });
 
+  it("uses a host-supplied socket URL verbatim and resolves relative REST bases", () => {
+    // Relay-fronted embedding: the host owns route and auth — WUI appends
+    // NOTHING (token-in-URL is exactly what such hosts forbid).
+    expect(new HubClient({ base_url: "/proxy/prefix", bearer_token: "k", ws_url: "wss://host.example/relay/socket" }).ws_url())
+      .toBe("wss://host.example/relay/socket");
+    expect(new HubClient({ ws_url: "wss://host.example/relay/socket" }).ws_url())
+      .toBe("wss://host.example/relay/socket");
+    // A relative REST base with a real bearer still derives the Hub's
+    // documented token lane against the page origin instead of nulling out.
+    expect(new HubClient({ base_url: "/hub", bearer_token: "existing-key" }).ws_url())
+      .toMatch(/^ws:\/\/[^/]+\/hub\/ws\?token=existing-key$/);
+  });
+
   it("derives the Hub's documented browser WebSocket lane from the in-memory seat key", () => {
     expect(new HubClient({ base_url: "http://127.0.0.1:8765", bearer_token: "ephemeral-test-token" }).ws_url())
       .toBe("ws://127.0.0.1:8765/ws?token=ephemeral-test-token");
@@ -58,6 +71,58 @@ describe("native Agora Hub transport", () => {
   it("uses the native attachment path", () => {
     const client = new HubClient({ base_url: "http://127.0.0.1:8765" });
     expect(client.attachment_url("team alpha", "blob_123")).toBe("http://127.0.0.1:8765/channels/team%20alpha/attachments/blob_123");
+  });
+
+  it("writes channel-fs files through the hub's versioned PUT route", async () => {
+    let seen_url = "";
+    let seen_method = "";
+    let posted: any;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen_url = String(input);
+      seen_method = String(init?.method || "GET");
+      posted = JSON.parse(String(init?.body || "{}"));
+      return new Response(JSON.stringify({ path: "notes/plan.md", version: 4 }), { status: 200 });
+    }));
+    const hub = new HubClient({ base_url: "http://127.0.0.1:8765", bearer_token: "existing-key" });
+    await hub.fs_put("team alpha", "notes/plan v2.md", { content: "# plan", expect_version: 3 });
+    expect(seen_url).toBe("http://127.0.0.1:8765/channels/team%20alpha/fs/notes/plan%20v2.md");
+    expect(seen_method).toBe("PUT");
+    // expect_version rides the write verbatim: concurrency is the HUB's
+    // contract (409 on mismatch), never a client-side guess.
+    expect(posted).toEqual({ content: "# plan", expect_version: 3, mime: undefined, description: undefined });
+  });
+
+  it("deletes vfs files through the hub's CAS DELETE route", async () => {
+    let seen_url = "";
+    let seen_method = "";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen_url = String(input);
+      seen_method = String(init?.method || "GET");
+      return new Response(JSON.stringify({ deleted: true }), { status: 200 });
+    }));
+    const hub = new HubClient({ base_url: "http://127.0.0.1:8765", bearer_token: "existing-key" });
+    await expect(hub.fs_delete("team alpha", "notes/plan v2.md", 7)).resolves.toEqual({ deleted: true });
+    expect(seen_method).toBe("DELETE");
+    // expect_version rides as the hub's query param — the fence is the
+    // HUB's contract (409 on mismatch), never a client-side guess.
+    expect(seen_url).toBe("http://127.0.0.1:8765/channels/team%20alpha/fs/notes/plan%20v2.md?expect_version=7");
+  });
+
+  it("reads and sets standing missions on the hub's admin routes", async () => {
+    const calls: Array<{ url: string; method: string; body: any }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), method: String(init?.method || "GET"), body: init?.body ? JSON.parse(String(init.body)) : null });
+      return new Response(JSON.stringify(calls.length === 1 ? [{ agent_id: "runtime", mission: "own the runtime" }] : { ok: true }), { status: 200 });
+    }));
+    const hub = new HubClient({ base_url: "http://127.0.0.1:8765", bearer_token: "existing-key" });
+    await expect(hub.missions()).resolves.toEqual([{ agent_id: "runtime", mission: "own the runtime" }]);
+    await hub.set_mission("code tui", "harden the coder console");
+    expect(calls[0]).toMatchObject({ url: "http://127.0.0.1:8765/admin/missions", method: "GET" });
+    expect(calls[1]).toMatchObject({
+      url: "http://127.0.0.1:8765/admin/agents/code%20tui/mission",
+      method: "PUT",
+      body: { mission: "harden the coder console" },
+    });
   });
 
   it("fetches attachment bytes through the authenticated Hub client", async () => {

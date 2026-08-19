@@ -1,5 +1,5 @@
 // Shared file viewer for the Team page (operator dm 35): previews a channel
-// virtual-filesystem file OR a message attachment inline — markdown rendered
+// virtual file system (vfs) file OR a message attachment inline — markdown rendered
 // via the kit (proper md), plain text in a scroll box, raster images inline,
 // and a download link for anything else. One modal, two callers (the Files
 // browser and the attachment chips) so the render behavior never drifts.
@@ -33,6 +33,19 @@ export type FileView = {
   error?: string;
   /** Provenance line (author · date · version) for fs files. */
   meta?: string;
+  /** Owning channel for vfs-sourced views. Cross-channel `@channel:path`
+   *  references open (and save) against THIS channel, never the one the
+   *  reader happens to have selected. */
+  channel?: string;
+  /** Channel-fs version at read time — rides the save as expect_version so
+   *  a concurrent agent write surfaces as the hub's own 409, never a silent
+   *  overwrite. */
+  version?: number;
+  /** True when the full content is in `text` (a clamped oversize preview
+   *  must never round-trip through an editor). */
+  editable?: boolean;
+  /** Open directly in the editor (the Files drawer's new-file flow). */
+  start_editing?: boolean;
 };
 
 const RASTER = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -73,16 +86,86 @@ function ImagePreview({ url, name }: { url: string; name: string }): React.React
   return <img className="team_fileview_img" src={url} alt={name} onError={() => set_failed(true)} />;
 }
 
-export function FileViewer({ view, onClose }: { view: FileView | null; onClose: () => void }): React.ReactElement | null {
+export function FileViewer({ view, onClose, onSave }: {
+  view: FileView | null;
+  onClose: () => void;
+  /** When set, md/text fs files gain an Edit mode; the handler performs the
+   *  hub write (throwing surfaces the hub's refusal verbatim in place, with
+   *  the draft preserved). Absent for attachments — message payloads are
+   *  immutable. */
+  onSave?: (text: string) => Promise<void>;
+}): React.ReactElement | null {
+  const [editing, set_editing] = React.useState(false);
+  const [draft, set_draft] = React.useState("");
+  const [save_busy, set_save_busy] = React.useState(false);
+  const [save_error, set_save_error] = React.useState("");
+  // Reset editor state when the viewed file changes (path or version).
+  const view_key = view ? `${view.name}@${view.version ?? "?"}` : "";
+  React.useEffect(() => {
+    set_editing(Boolean(view?.start_editing));
+    set_draft(view?.text || "");
+    set_save_busy(false);
+    set_save_error("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view_key, Boolean(view)]);
   if (!view) return null;
+  const can_edit = Boolean(onSave) && Boolean(view.editable) && !view.loading && !view.error && (view.mode === "md" || view.mode === "text");
   const download_link = view.url ? (
     <a className="btn primary" href={view.url} target="_blank" rel="noreferrer" download>
       Download {view.name}
     </a>
   ) : null;
+  async function save(): Promise<void> {
+    if (!onSave) return;
+    set_save_busy(true);
+    set_save_error("");
+    try {
+      await onSave(draft);
+      set_editing(false);
+    } catch (e: any) {
+      // The hub's refusal (403 policy, 409 version conflict) verbatim —
+      // the draft stays so a conflict never eats the operator's writing.
+      set_save_error(String(e?.message || e || "save failed"));
+    } finally {
+      set_save_busy(false);
+    }
+  }
+  if (editing) {
+    return (
+      <Modal open={true} title={`${view.name} — editing`} onClose={onClose} variant="default">
+        {view.meta ? <div className="muted team_note" style={{ marginBottom: 8 }}>{view.meta}</div> : null}
+        <textarea
+          className="team_fileedit_text mono"
+          value={draft}
+          onChange={(e) => set_draft(e.target.value)}
+          disabled={save_busy}
+          aria-label={`Edit ${view.name}`}
+          spellCheck={false}
+        />
+        {save_error ? <div className="page_error mono">{save_error}</div> : null}
+        <div className="team_fileedit_actions">
+          <button className="btn" disabled={save_busy} onClick={() => { set_editing(false); set_save_error(""); }}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={save_busy} onClick={() => void save()}>
+            {save_busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal open={true} title={view.name} onClose={onClose} variant="default">
-      {view.meta ? <div className="muted team_note" style={{ marginBottom: 8 }}>{view.meta}</div> : null}
+      {view.meta || can_edit ? (
+        <div className="team_fileview_head">
+          {view.meta ? <span className="muted team_note">{view.meta}</span> : <span />}
+          {can_edit ? (
+            <button className="btn" onClick={() => { set_draft(view.text || ""); set_editing(true); }} title="Edit this file in place — saved through the hub's versioned write (concurrent edits surface as a version conflict, never a silent overwrite)">
+              Edit
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {view.loading ? (
         <div className="muted team_note">Loading…</div>
       ) : view.error ? (
