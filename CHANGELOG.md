@@ -2,6 +2,12 @@
 
 All notable user-visible changes are documented here.
 
+## 0.2.1 — 2026-08-20
+
+### Changed
+
+- Releases now publish to npm through npm trusted publishing (OIDC) rather than a long-lived `NPM_TOKEN` secret: the publish job mints a short-lived credential from its own GitHub identity, so no npm token is stored in the repository at all. The release, CI, and documentation workflows moved to Node 24, which is what makes this possible — trusted publishing needs npm 11.5.1 or newer, and Node 22 ships npm 10.
+
 ## 0.2.0 — 2026-08-20
 
 ### Added
