@@ -521,7 +521,11 @@ export function TeamPage(props: {
   const [error, set_error] = useState("");
   const [loading, set_loading] = useState(false);
   /** Thread panels deliberately folded by the reader in this channel view. */
-  const [folded_threads, set_folded_threads] = useState<Record<string, boolean>>({});
+  // Threads are FOLDED by default: a channel opens as a scannable list of
+  // roots, and opening a trail is the reader's explicit act. The map holds
+  // the threads the reader OPENED (absent = folded), so a thread stays open
+  // across polls and new replies, and a channel switch resets to the list.
+  const [open_threads, set_open_threads] = useState<Record<string, boolean>>({});
   const read_fired = useRef<Set<string>>(new Set());
 
   // CHANNEL GENERATION GUARD (adversary P1 cluster): every async
@@ -923,8 +927,11 @@ export function TeamPage(props: {
   async function refresh_badges_once(chans: HubChannel[]): Promise<void> {
     try {
       const inbox = await hub.inbox();
-      const unread = unread_by_channel(inbox as Array<{ channel?: string }>);
-      const next_unread = unread_seqs_by_channel(inbox as Array<{ channel?: string; seq?: number }>);
+      // Own-seat envelopes never count as unread (you wrote them); the
+      // seat gates it so a pre-identity poll cannot silently drop rows.
+      const seat_id = meta_ref.current?.seat || "";
+      const unread = unread_by_channel(inbox as Array<{ channel?: string; sender?: string }>, seat_id);
+      const next_unread = unread_seqs_by_channel(inbox as Array<{ channel?: string; seq?: number; sender?: string }>, seat_id);
       set_unread_map((cur) => (same_unread(cur, next_unread) ? cur : next_unread));
       // Sticky debts (dm 111): rendered differently from plain unread —
       // clicking cannot clear them, only answering can.
@@ -1311,7 +1318,7 @@ export function TeamPage(props: {
 
   useEffect(() => {
     chan_gen.current += 1;
-    set_folded_threads({});
+    set_open_threads({});
     read_fired.current = new Set();
     set_verify_state(null);
     set_info(null);
@@ -4571,86 +4578,72 @@ export function TeamPage(props: {
 
   function render_thread(t: Thread): React.ReactElement {
     const n = t.replies.length;
-    const folded = filter === "all" && Boolean(folded_threads[t.root.id]);
+    // A filter is a request to SEE matching messages — never fold under one.
+    const folded = filter === "all" && !open_threads[t.root.id];
     const thread_count = n + 1;
     const thread_label = String(t.root.title || "").trim() || String(t.root.body || "").replace(/\s+/g, " ").trim() || "(no text)";
-    // Thread header counts deliberately stay within the Hub's loaded window.
-    // They are presentation of Hub-served state, never local collaboration
-    // inference: `new` is the precise inbox cursor, `needs you` is the Hub
-    // debt set, and questions only appear when the Hub served pending_asks.
-    const thread_messages = [t.root, ...t.replies];
-    const unread_count = thread_messages.filter((m) => Boolean(filter_ctx.unread_seqs?.has(m.seq))).length;
-    const debt_count = thread_messages.filter((m) => Boolean(debt_map[m.channel]?.has(m.seq))).length;
-    const pending_question_count = thread_messages.reduce(
+    // Counts are REPLY-scoped: the bar summarizes exactly what the fold
+    // hides. Every message's own state renders on its own row (unread
+    // accent, needs-reply chip, status chips, ask list), so the root is
+    // never counted here — that double-reporting was the old header's
+    // second duplication. Still pure presentation of Hub-served state:
+    // `new` is the inbox cursor, `!` the Hub debt set, `?` pending_asks.
+    const unread_count = t.replies.filter((m) => Boolean(filter_ctx.unread_seqs?.has(m.seq))).length;
+    const debt_count = t.replies.filter((m) => Boolean(debt_map[m.channel]?.has(m.seq))).length;
+    const pending_question_count = t.replies.reduce(
       (count, m) => count + (Array.isArray(m.pending_asks) ? m.pending_asks.filter(Boolean).length : 0),
       0,
     );
-    const content_id = `thread-${t.root.id}`;
-    const toggle_thread = () => set_folded_threads((cur) => ({ ...cur, [t.root.id]: !folded }));
-    const thread_header = (
-      <div className={`team_thread_card_header ${folded ? "folded" : ""}`}>
-        <div className="team_thread_identity" title={`${t.root.sender}: ${thread_label}`}>
-          <span className="team_thread_sender" style={sender_style(t.root.sender)}>{t.root.sender}</span>
-          <span className="team_thread_preview" aria-hidden="true" data-preview={thread_label} />
-        </div>
-        <div className="team_thread_utilities">
-          {n > 0 ? (
-            <span className="team_thread_stat" aria-label={`${n} ${n === 1 ? "reply" : "replies"} in this loaded view`} title={`${n} ${n === 1 ? "reply" : "replies"} in this loaded view`}>
-              <span aria-hidden="true">↩</span> {n}
-            </span>
-          ) : null}
-          {unread_count > 0 ? (
-            <span className="team_thread_stat new" aria-label={`${unread_count} unread ${unread_count === 1 ? "message" : "messages"} in this loaded view`} title={`${unread_count} unread ${unread_count === 1 ? "message" : "messages"} in this loaded view`}>
-              <span aria-hidden="true">●</span> {unread_count}
-            </span>
-          ) : null}
-          {debt_count > 0 ? (
-            <span className="team_thread_stat debt" aria-label={`${debt_count} ${debt_count === 1 ? "message needs" : "messages need"} your reply`} title={`${debt_count} ${debt_count === 1 ? "message needs" : "messages need"} your reply`}>
-              <span aria-hidden="true">!</span> {debt_count}
-            </span>
-          ) : null}
-          {pending_question_count > 0 ? (
-            <span className="team_thread_stat ask" aria-label={`${pending_question_count} pending ${pending_question_count === 1 ? "question" : "questions"} served by the Hub`} title={`${pending_question_count} pending ${pending_question_count === 1 ? "question" : "questions"} served by the Hub`}>
-              <span aria-hidden="true">?</span> {pending_question_count}
-            </span>
-          ) : null}
-          <button
-            className="team_thread_toggle"
-            type="button"
-            onClick={toggle_thread}
-            disabled={filter !== "all"}
-            aria-controls={folded ? undefined : content_id}
-            aria-expanded={!folded}
-            aria-label={`${folded ? "Expand" : "Fold"} thread: ${thread_label}, ${thread_count} messages in this loaded view`}
-            title={filter !== "all" ? "Clear the filter before folding; matching messages stay visible" : folded ? "Expand this thread" : "Fold this thread"}
-          >
-            <span className="team_thread_toggle_chevron" aria-hidden="true">{folded ? "▸" : "▾"}</span>
-          </button>
-        </div>
-      </div>
-    );
-    if (folded) {
-      return (
-        <article className="team_thread_group team_thread_card team_thread_group_folded" key={t.root.id} aria-label={`Thread: ${thread_label}`}>
-          {thread_header}
-        </article>
-      );
-    }
+    const replies_id = `thread-${t.root.id}`;
+    const toggle_thread = () => set_open_threads((cur) => ({ ...cur, [t.root.id]: folded }));
     const s = summaries[t.root.id];
+    const reply_word = n === 1 ? "reply" : "replies";
     return (
-      <article className={`team_thread_group team_thread_card ${n ? "has_replies" : ""}`} key={t.root.id} aria-label={`Thread: ${thread_label}`}>
-        {thread_header}
-        <div className="team_thread_content" id={content_id}>
-          {t.orphan ? (
-            <div className="team_orphan mono" title="The parent message is older than the fetched window — the trail starts mid-flight.">
-              ↩ reply to an earlier message (outside the window)
-            </div>
-          ) : null}
-          {render_msg(t.root, { is_root: true })}
-          {/* The open card renders the complete loaded thread. Folding lives
-              once in the header; there is no second hidden reply window. */}
-          {ai_available && n > 0 ? (
-            <div className="team_trail_bar">
+      <article className={`team_thread_group team_thread_card ${n ? "has_replies" : ""} ${folded ? "team_thread_group_folded" : ""}`} key={t.root.id} aria-label={`Thread: ${thread_label}`}>
+        {t.orphan ? (
+          <div className="team_orphan mono" title="The parent message is older than the fetched window — the trail starts mid-flight.">
+            ↩ reply to an earlier message (outside the window)
+          </div>
+        ) : null}
+        {/* The ROOT is the card's headline and always renders: it carries
+            its own author, badges, and body. A separate header line
+            repeating the same sentence was pure duplication. */}
+        {render_msg(t.root, { is_root: true })}
+        {/* One bar between root and trail: it owns the fold (replies only),
+            summarizes what folding hides, and holds the trail tools. */}
+        {n > 0 ? (
+          <div className="team_reply_bar">
+            <button
+              className="team_reply_toggle"
+              type="button"
+              onClick={toggle_thread}
+              disabled={filter !== "all"}
+              aria-controls={folded ? undefined : replies_id}
+              aria-expanded={!folded}
+              aria-label={`${folded ? "Show" : "Hide"} ${n} ${reply_word} to: ${thread_label}`}
+              title={filter !== "all" ? "Clear the filter before folding; matching messages stay visible" : folded ? `Show the ${n} ${reply_word}` : `Hide the ${n} ${reply_word}`}
+            >
+              <span className="team_thread_toggle_chevron" aria-hidden="true">{folded ? "▸" : "▾"}</span>
+              <span className="team_reply_toggle_label">
+                {n} {reply_word}
+              </span>
+            </button>
+            {unread_count > 0 ? (
+              <span className="team_thread_stat new" aria-label={`${unread_count} unread ${unread_count === 1 ? "reply" : "replies"} in this loaded view`} title={`${unread_count} unread ${unread_count === 1 ? "reply" : "replies"} in this loaded view`}>
+                <span aria-hidden="true">●</span> {unread_count}
+              </span>
+            ) : null}
+            {debt_count > 0 ? (
+              <span className="team_thread_stat debt" aria-label={`${debt_count} ${debt_count === 1 ? "reply needs" : "replies need"} your answer`} title={`${debt_count} ${debt_count === 1 ? "reply needs" : "replies need"} your answer`}>
+                <span aria-hidden="true">!</span> {debt_count}
+              </span>
+            ) : null}
+            {pending_question_count > 0 ? (
+              <span className="team_thread_stat ask" aria-label={`${pending_question_count} pending ${pending_question_count === 1 ? "question" : "questions"} in the replies`} title={`${pending_question_count} pending ${pending_question_count === 1 ? "question" : "questions"} in the replies, served by the Hub`}>
+                <span aria-hidden="true">?</span> {pending_question_count}
+              </span>
+            ) : null}
+            {ai_available ? (
               <button
                 className="team_thread_tool team_summarize"
                 disabled={Boolean(s?.busy)}
@@ -4661,29 +4654,31 @@ export function TeamPage(props: {
                 <span aria-hidden="true">✦</span>
                 <span>{thread_count}</span>
               </button>
+            ) : null}
+          </div>
+        ) : null}
+        {n > 0 && !folded ? (
+          <div className="team_replies" id={replies_id}>
+            {t.replies.map((r) => render_msg(r, { is_root: false }))}
+          </div>
+        ) : null}
+        {s?.text ? (
+          <div className="team_summary">
+            <div className="team_summary_head">
+              <span>
+                AI summary — {s.count} message{s.count === 1 ? "" : "s"}
+              </span>
+              <button
+                className="team_row_expand"
+                onClick={() => set_summaries((cur) => ({ ...cur, [t.root.id]: { busy: false, text: "", error: "", count: 0 } }))}
+              >
+                dismiss
+              </button>
             </div>
-          ) : null}
-          {n > 0 ? (
-            <div className="team_replies">{t.replies.map((r) => render_msg(r, { is_root: false }))}</div>
-          ) : null}
-          {s?.text ? (
-            <div className="team_summary">
-              <div className="team_summary_head">
-                <span>
-                  AI summary — {s.count} message{s.count === 1 ? "" : "s"}
-                </span>
-                <button
-                  className="team_row_expand"
-                  onClick={() => set_summaries((cur) => ({ ...cur, [t.root.id]: { busy: false, text: "", error: "", count: 0 } }))}
-                >
-                  dismiss
-                </button>
-              </div>
-              <Markdown className="md_doc" text={neutralize_unsafe_embeds(s.text)} />
-            </div>
-          ) : null}
-          {s?.error ? <div className="page_error mono">{s.error}</div> : null}
-        </div>
+            <Markdown className="md_doc" text={neutralize_unsafe_embeds(s.text)} />
+          </div>
+        ) : null}
+        {s?.error ? <div className="page_error mono">{s.error}</div> : null}
       </article>
     );
   }

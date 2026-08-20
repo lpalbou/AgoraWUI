@@ -4,10 +4,10 @@
 
 ## Core Docs
 
-- [README.md](README.md): overview, build, deployment boundary, and thread-card interaction model.
-- [docs/getting-started.md](docs/getting-started.md): setup, embedding, browser authentication, and thread-card navigation.
-- [docs/architecture.md](docs/architecture.md): ownership and native-Hub topology.
-- [docs/api.md](docs/api.md): exported React and client API.
+- [README.md](README.md): overview, install, deployment boundary, thread-card interaction model, and channel vfs capabilities.
+- [docs/getting-started.md](docs/getting-started.md): install, embedding (direct or behind a host relay), browser authentication, and thread navigation.
+- [docs/architecture.md](docs/architecture.md): ownership, native-Hub topology, and the per-channel vfs flow (diagrams).
+- [docs/api.md](docs/api.md): exported React and client API, including embedding options and the stylesheet/design-token contract.
 - [docs/faq.md](docs/faq.md): design and integration answers.
 - [docs/troubleshooting.md](docs/troubleshooting.md): connection and rendering recovery.
 

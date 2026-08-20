@@ -62,6 +62,14 @@ export function Markdown({ className, text }: { className?: string; text: string
         components={{
           a: ({ children }) => <span className="md_external_disabled" title="Links in Hub messages are displayed but never opened by WUI">{children}</span>,
           img: ({ alt }) => <span className="md_media_blocked" aria-label={alt || "Blocked external image"}>[{alt || "image"}]</span>,
+          // Agent reports carry real data tables. Each gets its own scroll
+          // container so a wide table scrolls itself instead of forcing the
+          // message column (and the page) sideways.
+          table: ({ children }) => (
+            <div className="md_table_wrap">
+              <table>{children}</table>
+            </div>
+          ),
         }}
       >
         {text}

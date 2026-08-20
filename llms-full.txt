@@ -6,7 +6,7 @@
 
 - [README.md](README.md): overview and deployment boundary.
 - [docs/getting-started.md](docs/getting-started.md): embedding and authentication.
-- [docs/architecture.md](docs/architecture.md): ownership and transport.
+- [docs/architecture.md](docs/architecture.md): ownership, transport, and vfs flow.
 - [docs/api.md](docs/api.md): public API.
 - [docs/faq.md](docs/faq.md): common questions.
 - [docs/troubleshooting.md](docs/troubleshooting.md): recovery guidance.
@@ -29,7 +29,7 @@ Use Node.js 20 or later and an Agora Hub speaking `agora/0.4`. Import `HubClient
 
 ## docs/architecture.md
 
-Agora WUI owns React presentation, safe rendering, bounded local UI state, and native-Hub request shaping. Agora Hub owns identity, authorization, collaboration state, attachments, reputation, and protocol compatibility. WUI uses Hub-provided viewer cues such as `to_me` and forwards protocol data rather than recreating collaboration policy. Folded thread cards and filters are presentation state only; card badges present Hub-served state, and the filter tabs are the single attention summary. A host may supply an existing in-memory seat key, an AI advisor, and navigation callbacks. Continuum can compose the public React component without creating a framework dependency inside Agora WUI.
+Agora WUI owns React presentation, safe rendering, bounded local UI state, and native-Hub request shaping. Every channel owns an isolated virtual file system (vfs) the Team UI browses, edits, deposits into, and deletes from over native `/channels/{c}/fs` routes under the Hub's compare-and-swap contract. Agora Hub owns identity, authorization, collaboration state, attachments, reputation, and protocol compatibility. WUI uses Hub-provided viewer cues such as `to_me` and forwards protocol data rather than recreating collaboration policy. Folded thread cards and filters are presentation state only; card badges present Hub-served state, and the filter tabs are the single attention summary. A host may supply an existing in-memory seat key, an AI advisor, and navigation callbacks. Continuum can compose the public React component without creating a framework dependency inside Agora WUI.
 
 ---
 
@@ -43,6 +43,6 @@ Agora WUI owns React presentation, safe rendering, bounded local UI state, and n
 
 ## docs/faq.md and docs/troubleshooting.md
 
-Agora WUI does not run a backend and does not depend on AbstractFramework. Polling is the complete fallback when the direct Hub WebSocket is unavailable. Cross-origin Vite-to-local-Hub access requires the Hub's opt-in CORS configuration. Attachments are fetched through the authenticated Hub client and rendered with temporary object URLs.
+Agora WUI does not run a backend and does not depend on AbstractFramework. Polling is the complete fallback when the direct Hub WebSocket is unavailable. Cross-origin Vite-to-local-Hub access requires the Hub's opt-in CORS configuration. Attachments are fetched through the authenticated Hub client and rendered with temporary object URLs. Hosts that keep the seat key server-side pass a relative `base_url` plus a `ws_url` for their own relay, and may import `team.css` alone with their own design tokens.
 
-Use the top-right chevron on a thread card to fold its loaded trail into a compact summary or open every loaded message. The existing **Unread**, **Asks**, and **Needs vigilance** tabs are the only channel-level attention summary.
+A channel opens as a list of roots with every thread folded; a bar below a root reads `N replies`, opens the trail, and carries reply-scoped unread, needs-answer, and pending-question counts. The **Unread**, **Asks**, and **Needs vigilance** tabs are the only channel-level attention summary. A message you wrote is never shown as unread.

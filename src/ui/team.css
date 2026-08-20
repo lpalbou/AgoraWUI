@@ -1551,55 +1551,53 @@
   background: color-mix(in srgb, var(--bg-secondary) 42%, transparent);
 }
 
-.team_thread_card_header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 32px;
-  padding: 1px 2px 8px;
-  margin-bottom: 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--bg-tertiary) 78%, transparent);
-}
-
-.team_thread_card_header.folded {
-  padding-bottom: 1px;
-  margin-bottom: 0;
-  border-bottom: 0;
-}
-
-.team_thread_identity {
+/* One bar between the root and its trail: it owns the fold (replies only)
+   and summarizes what folding hides. The card's headline is the ROOT ROW
+   itself — no header line repeating the same sentence above it. */
+.team_reply_bar {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
-  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding: 4px 2px 0 34px; /* 34px aligns with the message body gutter */
+  border-top: 1px solid color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
 }
 
-.team_thread_sender {
-  flex: 0 0 auto;
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-}
-
-.team_thread_preview {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.team_thread_preview::after {
-  content: attr(data-preview);
-}
-
-.team_thread_utilities {
+.team_reply_toggle {
+  appearance: none;
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  flex: 0 0 auto;
+  gap: 5px;
+  min-height: 24px;
+  padding: 2px 9px 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent, #79c7ff) 34%, var(--bg-tertiary));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, #79c7ff) 10%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.team_reply_toggle:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent, #79c7ff) 62%, var(--bg-tertiary));
+  background: color-mix(in srgb, var(--accent, #79c7ff) 18%, transparent);
+  color: var(--text-primary);
+}
+
+.team_reply_toggle:focus-visible {
+  outline: 2px solid var(--accent, #79c7ff);
+  outline-offset: 1px;
+}
+
+.team_reply_toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.team_reply_toggle_label {
+  font-variant-numeric: tabular-nums;
 }
 
 .team_thread_stat {
@@ -1633,7 +1631,8 @@
   color: var(--accent, #79c7ff);
 }
 
-.team_thread_group > .team_thread_content > .team_row .team_row_body {
+/* The root reads at full strength; replies step back one level. */
+.team_thread_group > .team_row .team_row_body {
   color: var(--text-primary);
 }
 
@@ -1641,16 +1640,11 @@
   color: var(--text-secondary);
 }
 
-/* Secondary thread tools stay inside the card; fold/unfold lives once in
-   the header, where it is easy to find before reading the body. */
-.team_trail_bar {
-  display: flex;
-  gap: 4px;
-  padding: 2px 0 2px 34px;
-  flex-wrap: wrap;
+/* Trail tools sit on the reply bar, pushed to its trailing edge. */
+.team_reply_bar .team_thread_tool {
+  margin-left: auto;
 }
 
-.team_thread_toggle,
 .team_thread_tool {
   appearance: none;
   display: inline-flex;
@@ -1667,38 +1661,21 @@
   font-size: var(--font-size-xs);
 }
 
-.team_thread_toggle:hover:not(:disabled),
 .team_thread_tool:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-secondary);
 }
 
-.team_thread_toggle:focus-visible,
 .team_thread_tool:focus-visible {
   outline: 2px solid var(--accent, #79c7ff);
   outline-offset: 1px;
 }
 
 .team_thread_toggle_chevron {
-  color: currentColor;
-  font-size: 16px;
-  font-weight: 800;
-}
-
-.team_thread_toggle {
-  min-width: 28px;
-  min-height: 28px;
-  padding: 2px;
-  border: 1px solid color-mix(in srgb, var(--accent, #79c7ff) 62%, var(--bg-tertiary));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent, #79c7ff) 16%, var(--bg-tertiary));
   color: var(--accent, #79c7ff);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
-}
-
-.team_thread_toggle:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .team_summarize {
@@ -1928,9 +1905,14 @@
     0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
+/* Authorship is IDENTITY, not attention: it must not wear the same blue
+   left bar the unread accent uses. The two were 1px apart in the same
+   --info blue, so a seat's own message read as unread (operator report
+   2026-08-20). Own rows get a quiet neutral edge; blue stays reserved for
+   "there is something here you have not read". */
 .team_row.own {
-  background: rgba(96, 165, 250, 0.03);
-  box-shadow: inset 2px 0 0 var(--info, #60a5fa);
+  background: rgba(255, 255, 255, 0.016);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-muted) 55%, transparent);
 }
 
 /* Row matching the ACTIVE filter — the reason it is on screen. */
@@ -1977,9 +1959,9 @@
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--info, #60a5fa) 75%, transparent);
 }
 
-/* Own rows already carry a 2px info inset; unread wins while it lasts
-   (an own unread is near-impossible — the seat wrote it — but a forged
-   sender must not double-stripe). */
+/* Own rows carry the neutral identity edge; if one ever renders unread
+   (the hub excludes the author from its own inbox, so this is a forged- or
+   skewed-sender guard), the blue attention edge wins outright. */
 .team_row.own.unread {
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--info, #60a5fa) 75%, transparent);
 }
@@ -2185,6 +2167,98 @@
 
 .md_doc :not(pre) > code {
   color: var(--text-primary);
+}
+
+/* Data tables in agent reports are evidence, not decoration: they need
+   real column separation and a scroll lane of their own. The renderer
+   wraps every table in .md_table_wrap so a wide table scrolls itself and
+   the message column never pushes the page sideways. */
+.md_table_wrap {
+  overflow-x: auto;
+  margin: 10px 0;
+  border: 1px solid var(--ui-border-1, var(--bg-tertiary));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-primary) 45%, transparent);
+}
+
+.md_doc table {
+  border-collapse: collapse;
+  width: 100%;
+  /* Columns need room to be readable; below this the wrapper scrolls
+     rather than shredding every cell into one word per line. */
+  min-width: 30rem;
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.md_doc thead th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  vertical-align: bottom;
+  padding: 7px 10px;
+  background: var(--ui-surface-2, var(--bg-tertiary));
+  color: var(--text-primary);
+  font-weight: 650;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--ui-border-1, var(--bg-tertiary));
+}
+
+.md_doc tbody td {
+  /* Top alignment keeps multi-line cells reading as rows, not as a
+     vertically-centred cloud (the wall the operator reported). */
+  vertical-align: top;
+  text-align: left;
+  padding: 7px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--ui-border-1, var(--bg-tertiary)) 55%, transparent);
+  color: var(--text-secondary);
+}
+
+/* Column rules: without them wrapped cells bleed into their neighbours. */
+.md_doc th + th,
+.md_doc td + td {
+  border-left: 1px solid color-mix(in srgb, var(--ui-border-1, var(--bg-tertiary)) 45%, transparent);
+}
+
+.md_doc tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.018);
+}
+
+/* GFM alignment markers still win where an author set them. */
+.md_doc th[align="center"],
+.md_doc td[align="center"] {
+  text-align: center;
+}
+
+.md_doc th[align="right"],
+.md_doc td[align="right"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The first column is the row's label: give it weight and keep it from
+   being squeezed to one word per line by a greedy neighbour. */
+.md_doc tbody td:first-child {
+  color: var(--text-primary);
+  font-weight: 600;
+  min-width: 12ch;
+}
+
+/* Cells inherit `overflow-wrap: anywhere` from the message body, which
+   snaps long identifiers mid-token. Inside a table, break only when a
+   token genuinely cannot fit its column; the wrapper scrolls instead. */
+.md_doc th,
+.md_doc td {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.md_doc td > p {
+  margin: 0;
+}
+
+.md_doc td > p + p {
+  margin-top: 5px;
 }
 
 .team_row_asks {

@@ -180,7 +180,18 @@ export type ChannelBadges = {
 };
 
 /** Group the seat's inbox envelopes into per-channel unread counts. */
-export function unread_by_channel(inbox: Array<{ channel?: string; seq?: number }>): Record<string, number> {
+/** A message you WROTE is read by definition — the hub's inbox can still
+ *  carry an envelope for it (an open broadcast obligation pins every
+ *  member, author included), but rendering that as "unread" is nonsense.
+ *  Both unread readers drop own-seat envelopes so the channel badge, the
+ *  Unread tab, the row accent, and the reply-bar counts stay one truth. */
+function not_own(inbox: Array<{ sender?: string }>, seat: string): Array<{ sender?: string }> {
+  const me = String(seat || "");
+  return me ? inbox.filter((e) => String(e.sender || "") !== me) : inbox;
+}
+
+export function unread_by_channel(inbox_rows: Array<{ channel?: string; seq?: number; sender?: string }>, seat = ""): Record<string, number> {
+  const inbox = not_own(inbox_rows, seat) as Array<{ channel?: string; seq?: number }>;
   // ONE truth with the Unread-filter fold (operator dm 147: badge said 2,
   // tab said 1): count DISTINCT (channel, seq) — the hub's own client
   // contract ("dedup by per-channel seq high-water") because synthetic
@@ -205,7 +216,8 @@ export function unread_by_channel(inbox: Array<{ channel?: string; seq?: number 
 
 /** Per-channel unread seq sets (the Unread filter + row dots ride the
  *  same inbox envelopes as the badge counts). */
-export function unread_seqs_by_channel(inbox: Array<{ channel?: string; seq?: number }>): Record<string, Set<number>> {
+export function unread_seqs_by_channel(inbox_rows: Array<{ channel?: string; seq?: number; sender?: string }>, seat = ""): Record<string, Set<number>> {
+  const inbox = not_own(inbox_rows, seat) as Array<{ channel?: string; seq?: number }>;
   const out: Record<string, Set<number>> = {};
   for (const e of inbox) {
     const c = String(e.channel || "");

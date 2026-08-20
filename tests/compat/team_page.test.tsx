@@ -983,10 +983,13 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     await screen.findByText("root ask");
     // 3 messages → 2 threads (the reply folded under its root).
     await screen.findByText(/2 threads/); // live-dot span shares the meta element
+    // Threads open FOLDED: the reply lives behind its root's fold bar.
+    expect(screen.queryByText("the answer")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 reply to: root ask" }));
     expect(screen.getByText("the answer")).toBeTruthy();
   });
 
-  it("folds a root and every reply into one expandable thread panel", async () => {
+  it("folds the REPLIES only — the root stays the card's headline, never repeated above it", async () => {
     stub_hub({
       messages: [
         { ...base, id: "fold-root", seq: 1, sender: "core", status: "open", title: "parent topic", body: "root body", reply_to: null },
@@ -995,20 +998,102 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     });
     render_page();
     await screen.findByText("parent topic");
-    await screen.findByText("child topic");
-    const fold_control = screen.getByRole("button", { name: /Fold thread: parent topic, 2 messages in this loaded view/ });
-    expect(fold_control.textContent).toBe("▾");
-    expect(fold_control.getAttribute("aria-controls")).toBe("thread-fold-root");
-    expect(screen.queryByText(/fold thread/i)).toBeNull();
-    fireEvent.click(fold_control);
-    expect(screen.queryByText("root body")).toBeNull();
+    // DEFAULT IS FOLDED: a channel opens as a scannable list of roots.
+    // The root's title/body appear exactly ONCE — the old card header
+    // repeated the same sentence directly above the root row.
+    expect(screen.getAllByText("parent topic")).toHaveLength(1);
+    expect(screen.getAllByText("root body")).toHaveLength(1);
     expect(screen.queryByText("child topic")).toBeNull();
-    const panel = screen.getByRole("button", { name: /Expand thread: parent topic, 2 messages in this loaded view/ });
-    expect(panel.getAttribute("aria-expanded")).toBe("false");
-    expect(panel.hasAttribute("aria-controls")).toBe(false);
-    fireEvent.click(panel);
-    await screen.findByText("parent topic");
-    expect(screen.getByText("child topic")).toBeTruthy();
+    expect(screen.queryByText("reply body")).toBeNull();
+    const collapsed = screen.getByRole("button", { name: "Show 1 reply to: parent topic" });
+    expect(collapsed.textContent).toContain("1 reply");
+    expect(collapsed.getAttribute("aria-expanded")).toBe("false");
+    expect(collapsed.hasAttribute("aria-controls")).toBe(false);
+    fireEvent.click(collapsed);
+    await screen.findByText("child topic");
+    expect(screen.getByText("reply body")).toBeTruthy();
+    // Folding again hides the replies and leaves the ROOT untouched.
+    const open_control = screen.getByRole("button", { name: "Hide 1 reply to: parent topic" });
+    expect(open_control.getAttribute("aria-controls")).toBe("thread-fold-root");
+    fireEvent.click(open_control);
+    expect(screen.queryByText("child topic")).toBeNull();
+    expect(screen.getByText("parent topic")).toBeTruthy();
+    expect(screen.getByText("root body")).toBeTruthy();
+  });
+
+  it("opens a channel with every thread folded — roots only, replies behind their bars", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "a", seq: 1, sender: "core", status: "open", title: "topic A", body: "body A", reply_to: null },
+        { ...base, id: "a1", seq: 2, sender: "gateway", status: "reply", title: "reply A1", body: "trail A1", reply_to: "a" },
+        { ...base, id: "b", seq: 3, sender: "uic", status: "fyi", title: "topic B", body: "body B", reply_to: null },
+        { ...base, id: "b1", seq: 4, sender: "core", status: "reply", title: "reply B1", body: "trail B1", reply_to: "b" },
+      ],
+    });
+    render_page();
+    await screen.findByText("topic A");
+    // Every ROOT is readable; no trail is.
+    expect(screen.getByText("topic B")).toBeTruthy();
+    expect(screen.queryByText("reply A1")).toBeNull();
+    expect(screen.queryByText("reply B1")).toBeNull();
+    expect(document.querySelectorAll(".team_replies")).toHaveLength(0);
+    expect(document.querySelectorAll(".team_reply_bar")).toHaveLength(2);
+    // Opening one trail leaves the other folded.
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 reply to: topic A" }));
+    await screen.findByText("reply A1");
+    expect(screen.queryByText("reply B1")).toBeNull();
+  });
+
+  it("keeps matching messages visible under a filter instead of folding them", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "f", seq: 1, sender: "core", status: "fyi", title: "quiet root", body: "root", reply_to: null },
+        { ...base, id: "f1", seq: 2, sender: "gateway", status: "open", title: "the open reply", body: "trail", reply_to: "f" },
+      ],
+    });
+    render_page();
+    await screen.findByText("quiet root");
+    expect(screen.queryByText("the open reply")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Asks/ }));
+    // A filter is a request to SEE matches — the trail must not stay folded.
+    await screen.findByText("the open reply");
+  });
+
+  it("never paints the viewer's own message as unread, in the row or the counts", async () => {
+    // The hub pins an open broadcast obligation to every member — its
+    // AUTHOR included. That envelope is not "unread" for the author.
+    stub_hub({
+      messages: [
+        { ...base, id: "mine", seq: 175, sender: "laurent", status: "open", title: "Iterate and improve code-tui", body: "run REALISTIC scenario", reply_to: null },
+        { ...base, id: "theirs", seq: 176, sender: "code-tui", status: "reply", title: "on it", body: "starting now", reply_to: "mine" },
+      ],
+      inbox: [
+        { channel: "commons", seq: 175, sender: "laurent", status: "open", addressed: false, to_me: false },
+        { channel: "commons", seq: 176, sender: "code-tui", status: "reply", addressed: false, to_me: false },
+      ],
+    });
+    render_page();
+    await screen.findByText("Iterate and improve code-tui");
+    // The author's own root carries no unread accent...
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Unread/ }).textContent).toContain("1"));
+    const own_row = document.getElementById("hubmsg-mine");
+    expect(own_row?.className).toContain("own");
+    expect(own_row?.className).not.toContain("unread");
+    // ...and the counts agree on the one real unread message, never two.
+    expect(screen.getByLabelText("1 unread reply in this loaded view")).toBeTruthy();
+    // Opening the trail: the peer's reply IS unread.
+    fireEvent.click(screen.getByRole("button", { name: /^Show 1 reply/ }));
+    await screen.findByText("starting now");
+    expect(document.getElementById("hubmsg-theirs")?.className).toContain("unread");
+  });
+
+  it("gives a reply-less root no fold bar at all", async () => {
+    stub_hub({
+      messages: [{ ...base, id: "solo", seq: 1, sender: "core", status: "fyi", title: "standalone", body: "no replies", reply_to: null }],
+    });
+    render_page();
+    await screen.findByText("standalone");
+    expect(document.querySelector(".team_reply_bar")).toBeNull();
   });
 
   it("renders separate thread cards with only Hub-derived header badges", async () => {
@@ -1023,12 +1108,13 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     render_page();
     await screen.findByText("needs a decision");
     expect(document.querySelectorAll("article.team_thread_card")).toHaveLength(2);
-    expect(screen.getByLabelText("1 reply in this loaded view")).toBeTruthy();
-    expect(screen.getByLabelText("1 unread message in this loaded view")).toBeTruthy();
-    expect(screen.getByLabelText("3 pending questions served by the Hub")).toBeTruthy();
-    expect(screen.getByTitle("1 reply in this loaded view")).toBeTruthy();
-    expect(screen.getByTitle("1 unread message in this loaded view")).toBeTruthy();
-    expect(screen.getByTitle("3 pending questions served by the Hub")).toBeTruthy();
+    // Bar counts are REPLY-scoped — they summarize exactly what the fold
+    // hides. The root's own pending ask shows on the root row, so the
+    // question count here is the reply's two, not the thread's three.
+    expect(screen.getByRole("button", { name: "Show 1 reply to: needs a decision" })).toBeTruthy();
+    expect(screen.getByLabelText("1 unread reply in this loaded view")).toBeTruthy();
+    expect(screen.getByLabelText("2 pending questions in the replies")).toBeTruthy();
+    expect(screen.getByTitle("1 unread reply in this loaded view")).toBeTruthy();
     expect(screen.queryByText("missed?")).toBeNull();
     expect(document.querySelector(".team_chip_new")).toBeNull();
   });
@@ -1116,6 +1202,8 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
       ],
     });
     render_page();
+    await screen.findByText("topic");
+    fireEvent.click(screen.getByRole("button", { name: "Show 4 replies to: topic" }));
     await screen.findByText("first");
     expect(screen.getByText("second")).toBeTruthy();
     expect(screen.getByText("third")).toBeTruthy();
