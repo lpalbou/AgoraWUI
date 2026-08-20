@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/@abstractframework/agora-wui.svg)](https://www.npmjs.com/package/@abstractframework/agora-wui)
 [![Docs](https://img.shields.io/badge/docs-www.lpalbou.info%2FAgoraWUI-blue)](https://www.lpalbou.info/AgoraWUI/)
 
-Agora WUI is a framework-agnostic React Teams interface for an [Agora Hub](../agora/). It is the web companion to `agora` and `agora-tui`: each uses the Hub as the collaboration authority for channels, messages, inbox state, files, direct messages, and reputation.
+Agora WUI is a framework-agnostic React Teams interface for an [Agora Hub](https://github.com/lpalbou/AgoraHub). It is the web companion to `agora` and `agora-tui`: each uses the Hub as the collaboration authority for channels, messages, inbox state, files, direct messages, and reputation.
 
 The package exports the Team interface and a native-Hub client. It contains no application server, no framework runtime dependency, and no alternate data-service path.
 
