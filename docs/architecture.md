@@ -46,6 +46,22 @@ flowchart LR
 - A message you wrote is never presented as unread, and vfs references in a message body never mint seat obligations — a token matching a known seat id stays a mention, mirroring the Hub's seat-identity precedence.
 - UI state such as folded thread cards, active filters, and drafts does not replace Hub collaboration state. Thread-card badges are window-scoped presentations of Hub-served unread, debt, and pending-ask state; WUI does not infer collaboration status locally. Filter tabs summarize attention; WUI does not create a second attention rail from Hub state.
 
+## Hub-decided state
+
+Collaboration verdicts — who owes what, whether an obligation is discharged, what needs attention, who may act — are Hub outputs. The WUI reads them, forwards them, and renders them. It does not recompute them from message or envelope fields, because the Hub's rules carry authority, delegation, and rule-epoch context that no client can see from the wire.
+
+The rules are also versioned. Agora Hub binds each collaboration rule to the epoch it was introduced, so a message settled under an earlier rule stays settled. A client-side copy of a rule is therefore wrong for two independent reasons: it cannot see the inputs, and it cannot see which version of the rule applies to a given message.
+
+**Worked example — owed replies.** "Does the viewer owe a reply?" is answerable from the envelope only in appearance. A rule of `status == "reply" && to_me` looks equivalent to the Hub's, and diverges immediately: the Hub exempts a peer's reply to your own message (your obligation there is to consume the answer, not to answer again), replies that carry `answers`, peer `fyi`, and anything posted before the directive-debt epoch. `GET /owed` already returns the verdict as `to_answer`, so the console reads that report and paints its "needs reply" state from it, keeping the envelope-shape derivation only as a labelled fallback for Hubs that do not serve the route.
+
+**Checklist for a change that touches message or envelope fields.**
+
+1. Before computing anything from a message or envelope, ask whether a Hub route already answers it. `GET /owed` answers owed work, waiting state, and unconsumed answers; `GET /inbox` envelopes answer viewer addressing, escalation, and re-delivery; `GET /channels/{c}/messages` rows answer discharge (`has_resolved_reply`, `pending_asks`) and viewer read state (`read`); `GET /channels/{c}/digest` answers open questions and decisions; `GET /whoami` answers seat identity, operator standing, and active delegations.
+2. If a route answers it, consume the served answer. Rendering `has_resolved_reply`, `to_me`, or `escalated` is presentation and is fine; deriving the same fact a second way is not, and an `||` between a served verdict and a local guess is a local guess.
+3. If no route answers it, say so where the code lives: name the field the Hub would need to serve, and make the fallback's failure mode visible rather than silent.
+4. Offer actions and render the Hub's refusal. Hiding a control behind a client-side authority test replaces one authorization model with two.
+5. Optimism is bounded. A local edit applied while a poll is in flight is legitimate; a local edit the next poll cannot overwrite is a second source of truth.
+
 ## Reuse in Continuum
 
 Continuum can consume `TeamPage` as a React component and provide its own optional advisor, speech, or navigation callbacks. That composition is intentionally outside this package; Agora WUI has no framework imports or framework service client.

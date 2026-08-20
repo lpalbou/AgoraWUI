@@ -416,7 +416,7 @@ export function TeamPage(props: {
   const advisor_fn = props.advisor;
   const ai_available = Boolean(advisor_fn);
 
-  const [meta, set_meta] = useState<{ seat: string; seat_key_present: boolean } | null>(null);
+  const [meta, set_meta] = useState<{ seat: string; seat_key_present: boolean; operator: boolean } | null>(null);
   const meta_ref = useRef<typeof meta>(null);
   useEffect(() => {
     meta_ref.current = meta;
@@ -445,6 +445,16 @@ export function TeamPage(props: {
   type DeskView = { rows: Array<Record<string, unknown>>; satisfied: Array<Record<string, unknown>>; viewer?: string; computed_at?: number };
   const [desk_view, set_desk_view] = useState<DeskView | null | "loading">(null);
   const [desk_error, set_desk_error] = useState<string>("");
+  /** Desk scope (operator ask 2026-08-20): the /desk READ is hub-wide (the
+   *  route takes no channel), so this filters the view client-side. Default
+   *  is the open channel — the drawer answers "what waits on me HERE" first
+   *  and the header badge widens it to the whole hub in one click. */
+  const [desk_scope, set_desk_scope] = useState<"channel" | "hub">("channel");
+  /** The one scope test, shared by the drawer AND the tab badge — a count
+   *  on the tab that disagreed with the list under it would be a lie. */
+  function desk_in_scope(r: any): boolean {
+    return desk_scope === "hub" || (!!selected && String(r?.channel || "") === selected);
+  }
   /** Desk integration (laurent dm#64 via agora dm#33): the operator must
    *  not have to OPEN the drawer to know something waits. The badge poll
    *  rides refresh_badges on a ≥30s throttle (the desk is derived state
@@ -935,8 +945,32 @@ export function TeamPage(props: {
       set_unread_map((cur) => (same_unread(cur, next_unread) ? cur : next_unread));
       // Sticky debts (dm 111): rendered differently from plain unread —
       // clicking cannot clear them, only answering can.
-      const next_debts = debt_seqs_by_channel(inbox as any, meta_ref.current?.seat || "");
-      set_debt_map((cur) => (same_unread(cur, next_debts) ? cur : next_debts));
+      //
+      // THE HUB DECIDES WHAT YOU OWE. `/owed.to_answer` is its computed
+      // verdict; re-deriving debt from envelope shape here produced
+      // obligations the hub does not hold — notably a peer's reply to
+      // YOUR OWN message, which the hub exempts ("your debt for an answer
+      // is consumption, not another reply") but a `status=reply && to_me`
+      // rule cannot see. The envelope derivation remains only as the
+      // fallback for hubs that do not serve /owed.
+      void hub
+        .owed()
+        .then((report) => {
+          const rows = report.to_answer || [];
+          const next: Record<string, Set<number>> = {};
+          for (const row of rows) {
+            const channel = String((row as any).channel || "");
+            const seq = Number((row as any).seq);
+            if (!channel || !Number.isFinite(seq)) continue;
+            (next[channel] ||= new Set()).add(seq);
+          }
+          set_debt_map((cur) => (same_unread(cur, next) ? cur : next));
+        })
+        .catch(() => {
+          // Older hub, or /owed refused: fall back to the envelope shape.
+          const next_debts = debt_seqs_by_channel(inbox as any, meta_ref.current?.seat || "");
+          set_debt_map((cur) => (same_unread(cur, next_debts) ? cur : next_debts));
+        });
       const next_to_me = to_me_seqs_by_channel(inbox as any, meta_ref.current?.seat || "");
       set_to_me_map((cur) => (same_unread(cur, next_to_me) ? cur : next_to_me));
       const next_escalated = escalated_seqs_by_channel(inbox as any);
@@ -1004,7 +1038,7 @@ export function TeamPage(props: {
   async function refresh_channels(): Promise<void> {
     try {
       const [m, chans] = await Promise.all([hub.meta(), hub.channels()]);
-      set_meta({ seat: m.seat, seat_key_present: m.seat_key_present });
+      set_meta({ seat: m.seat, seat_key_present: m.seat_key_present, operator: Boolean(m.operator) });
       set_hub_url(String(m.hub_url || ""));
       void hub
         .healthz()
@@ -1047,7 +1081,7 @@ export function TeamPage(props: {
       // the dedicated banner instead of leaving meta null (which kept the
       // diagnostic unreachable on every path; adjudication A2).
       const status = Number(e?.status || 0);
-      if (status === 401 || status === 403) set_meta({ seat: "", seat_key_present: false });
+      if (status === 401 || status === 403) set_meta({ seat: "", seat_key_present: false, operator: false });
     }
   }
 
@@ -2634,6 +2668,54 @@ export function TeamPage(props: {
     }
   }
 
+  /** Armed thread retraction (agora 0097 `retract_thread`). Same in-app
+   *  confirm idiom as the vfs delete (`fs_del`): a browser `confirm()` is
+   *  unstyled and unreadable, and a bare two-click hides a blast radius
+   *  this wide. `root` is the thread's root message; `replies` is what THIS
+   *  console currently has loaded, shown only as a floor — the hub walks
+   *  the real trail from its own rows and may retract more. */
+  const [retract_thread_arm, set_retract_thread_arm] = useState<
+    { root: HubMessage; replies: number; busy: boolean; error: string } | null
+  >(null);
+
+  function arm_thread_retraction(root: HubMessage): void {
+    const loaded = messages.filter((m) => m.reply_to === root.id).length;
+    set_retract_thread_arm({ root, replies: loaded, busy: false, error: "" });
+  }
+
+  async function retract_thread(): Promise<void> {
+    const armed = retract_thread_arm;
+    if (!armed || armed.busy) return;
+    set_retract_thread_arm({ ...armed, busy: true, error: "" });
+    try {
+      const report = await hub.retract_thread(selected, armed.root.id);
+      const count = Number(report?.count || 0);
+      set_retract_thread_arm(null);
+      set_retract_nudge("");
+      set_notice(
+        `Thread retracted — ${count} message${count === 1 ? "" : "s"} now read as tombstones on every agent-facing surface.`,
+      );
+      setTimeout(() => set_notice(""), 4000);
+      await refresh_messages(selected, { background: true });
+    } catch (e: any) {
+      // The hub is the authority: its refusal (403 mixed authorship, 404 on
+      // a hub predating the verb) renders VERBATIM. The console never
+      // second-guesses it and never retries per message.
+      const msg = String(e?.message || e || "retract failed");
+      set_retract_thread_arm((cur) =>
+        cur
+          ? {
+              ...cur,
+              busy: false,
+              error: /404|not found/i.test(msg)
+                ? "Thread retraction ships with a newer hub — the running hub predates the verb. Nothing was changed."
+                : msg,
+            }
+          : cur,
+      );
+    }
+  }
+
   async function resolve_thread(m: HubMessage): Promise<void> {
     if (posting) return;
     let data: Record<string, unknown> | undefined;
@@ -3229,6 +3311,13 @@ export function TeamPage(props: {
   // Paused hub: fail at the composer, not on submit (usability critic F13).
   const can_post = Boolean(meta?.seat_key_present) && !health?.paused;
   const seat = meta?.seat || "";
+  /** The HUB's answer about this seat (`/whoami.operator`), used for
+   *  VISIBILITY only: an operator sees the retract controls on messages
+   *  that are not theirs, because the hub would honor them. It is NOT an
+   *  authorization check — the console never decides who may retract; it
+   *  calls, and a refusal renders verbatim. An older hub omitting the field
+   *  reads false, which merely hides a control the hub would have allowed. */
+  const is_operator = Boolean(meta?.operator);
   /** Inside a dm:* channel the composer IS a dm — no type selector
    *  (operator dm 9: "if it's a direct message, it's a dm"). Peer label:
    *  the name is dm:<a>--<b> (sorted pair), and agent ids may THEMSELVES
@@ -3251,12 +3340,14 @@ export function TeamPage(props: {
     () => ({
       seat,
       unread_seqs: unread_map[selected],
+      // The Hub's own owed verdict drives vigilance (see FilterContext).
+      debt_seqs: debt_map[selected],
       unread_snapshot_seqs: filter === "unread" ? unread_snapshot || undefined : undefined,
       // Hub escalation axes for the vigilance filter (backlog 0010).
       escalated_seqs: escalation_map[selected],
       to_me_seqs: to_me_map[selected],
     }),
-    [seat, unread_map, selected, filter, unread_snapshot, escalation_map, to_me_map]
+    [seat, unread_map, selected, filter, unread_snapshot, escalation_map, to_me_map, debt_map]
   );
   /** Live group preview (agora dm 23 + operator dm 71): derived room slug
    *  + roster, from EITHER front door — the /group slash command in the
@@ -4121,15 +4212,24 @@ export function TeamPage(props: {
   function msg_chips(m: HubMessage, is_root: boolean): React.ReactElement[] {
     const chips: React.ReactElement[] = [];
     const status = String(m.status || "").toLowerCase();
-    // Client-side discharge fold (dm 86 + adversarial find 1): the raw
-    // messages list carries no has_resolved_reply, so with every dm line
-    // ask-class an answered open would wear its warning chip forever.
-    // A reply from another party calms it to a success tone.
-    const answered = (status === "open" || status === "blocked") && (m.has_resolved_reply === true || (m.id ? window_replied_ids.has(m.id) : false));
+    // DISCHARGE IS THE HUB'S VERDICT. Message rows carry
+    // `has_resolved_reply`, which the hub computes with operator and
+    // delegate authority: a bystander's "on it" does not settle an
+    // operator's commission, and a peer's addressed ask is not closed by a
+    // bare reply. The old local fold ("any other sender replied ⇒ calm")
+    // was the hub's PRE-2026-08 rule and marked live, escalating asks as
+    // answered. It survives only where the hub makes no statement (null /
+    // absent — an older hub), never as an override.
+    const answered =
+      (status === "open" || status === "blocked") &&
+      (m.has_resolved_reply === true ||
+        (m.has_resolved_reply === undefined || m.has_resolved_reply === null
+          ? Boolean(m.id && window_replied_ids.has(m.id))
+          : false));
     // fyi is the room's baseline — chip only the states that MEAN something.
     if (answered) {
       chips.push(
-        <AfChip key="st" tone="success" size="sm" title="This ask already has a reply from another seat.">
+        <AfChip key="st" tone="success" size="sm" title="The Hub reports a resolving reply in this thread — its own discharge verdict, not a count of replies.">
           answered
         </AfChip>
       );
@@ -4190,7 +4290,25 @@ export function TeamPage(props: {
    *  to a labeled fallback row instead of blanking the whole page (operator
    *  dm 55/57 — the URL-parse crash proved one message could take down the
    *  console). The raw body stays readable in the fallback. */
-  function render_msg(m: HubMessage, opts: { is_root: boolean }): React.ReactElement {
+  /** The thread's fold control, rendered INTO the root row's header so a
+   *  card carries its trail marker where the eye already is (operator ask
+   *  2026-08-20). Only ever passed for a root that has replies. */
+  type FoldControl = {
+    count: number;
+    folded: boolean;
+    disabled: boolean;
+    label: string;
+    replies_id: string;
+    unread: number;
+    debt: number;
+    asks: number;
+    toggle: () => void;
+    summarize?: () => void;
+    summarize_busy?: boolean;
+    summarize_total?: number;
+  };
+
+  function render_msg(m: HubMessage, opts: { is_root: boolean; fold?: FoldControl }): React.ReactElement {
     return (
       <ErrorBoundary
         key={m.id}
@@ -4221,7 +4339,7 @@ export function TeamPage(props: {
     );
   }
 
-  function render_msg_body(m: HubMessage, opts: { is_root: boolean }): React.ReactElement {
+  function render_msg_body(m: HubMessage, opts: { is_root: boolean; fold?: FoldControl }): React.ReactElement {
     const body = String(m.body || "");
     const asks = m.data?.asks || [];
     const unread = Boolean(filter_ctx.unread_seqs?.has(m.seq));
@@ -4247,7 +4365,18 @@ export function TeamPage(props: {
           {(m.sender[0] || "?").toUpperCase()}
         </span>
         <div className="team_row_main">
-          <div className="team_row_head">
+          <div
+            className={`team_row_head ${opts.fold && !opts.fold.disabled ? "foldable" : ""}`}
+            onClick={opts.fold && !opts.fold.disabled ? (e) => {
+              // Clicking the card's header line folds/unfolds its trail
+              // (operator ask 2026-08-20). Interactive children inside the
+              // header stop their own propagation, so this only fires for
+              // clicks on the header's own surface. The real control is the
+              // reply button below — keyboard users never need this.
+              if ((e.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+              opts.fold!.toggle();
+            } : undefined}
+          >
             {/* Unread uses the blue row accent only. A separate NEW pill
                 repeated the same signal; sticky Hub debt remains labeled
                 because reading it does not resolve the obligation. */}
@@ -4302,6 +4431,59 @@ export function TeamPage(props: {
             <span className="team_row_meta mono" title={abs_time(m.created_at)}>
               #{m.seq} · {ago(m.created_at)}
             </span>
+            {/* Trail marker at the card's top-right: a chat icon and the
+                reply count, which IS the fold control. Reply-scoped state
+                (unread / needs you / open questions) rides beside it so a
+                folded card still says what is inside. */}
+            {opts.fold ? (
+              <span className="team_fold_group">
+                {opts.fold.unread > 0 ? (
+                  <span className="team_thread_stat new" aria-label={`${opts.fold.unread} unread ${opts.fold.unread === 1 ? "reply" : "replies"} in this loaded view`} title={`${opts.fold.unread} unread ${opts.fold.unread === 1 ? "reply" : "replies"} in this loaded view`}>
+                    <span aria-hidden="true">●</span> {opts.fold.unread}
+                  </span>
+                ) : null}
+                {opts.fold.debt > 0 ? (
+                  <span className="team_thread_stat debt" aria-label={`${opts.fold.debt} ${opts.fold.debt === 1 ? "reply needs" : "replies need"} your answer`} title={`${opts.fold.debt} ${opts.fold.debt === 1 ? "reply needs" : "replies need"} your answer`}>
+                    <span aria-hidden="true">!</span> {opts.fold.debt}
+                  </span>
+                ) : null}
+                {opts.fold.asks > 0 ? (
+                  <span className="team_thread_stat ask" aria-label={`${opts.fold.asks} pending ${opts.fold.asks === 1 ? "question" : "questions"} in the replies`} title={`${opts.fold.asks} pending ${opts.fold.asks === 1 ? "question" : "questions"} in the replies, served by the Hub`}>
+                    <span aria-hidden="true">?</span> {opts.fold.asks}
+                  </span>
+                ) : null}
+                {opts.fold.summarize ? (
+                  <button
+                    className="team_thread_tool team_summarize"
+                    disabled={Boolean(opts.fold.summarize_busy)}
+                    title="LLM summary of this trail (root + replies) — read-only, never posts"
+                    aria-label={opts.fold.summarize_busy ? "Summarizing this thread" : `Summarize ${opts.fold.summarize_total} messages`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      opts.fold!.summarize!();
+                    }}
+                  >
+                    <span aria-hidden="true">✦</span>
+                  </button>
+                ) : null}
+                <button
+                  className="team_reply_toggle"
+                  type="button"
+                  disabled={opts.fold.disabled}
+                  aria-controls={opts.fold.folded ? undefined : opts.fold.replies_id}
+                  aria-expanded={!opts.fold.folded}
+                  aria-label={`${opts.fold.folded ? "Show" : "Hide"} ${opts.fold.count} ${opts.fold.count === 1 ? "reply" : "replies"} to: ${opts.fold.label}`}
+                  title={opts.fold.disabled ? "Clear the filter before folding; matching messages stay visible" : opts.fold.folded ? `Show the ${opts.fold.count} ${opts.fold.count === 1 ? "reply" : "replies"}` : `Hide the ${opts.fold.count} ${opts.fold.count === 1 ? "reply" : "replies"}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    opts.fold!.toggle();
+                  }}
+                >
+                  <Icon name="chat" size={12} />
+                  <span className="team_reply_toggle_label">{opts.fold.count}</span>
+                </button>
+              </span>
+            ) : null}
           </div>
           {title && !title_is_echo ? <div className="team_row_title">{title}</div> : null}
           {/* Full markdown always renders in an open thread. A char-slice
@@ -4518,15 +4700,19 @@ export function TeamPage(props: {
             </button>
             {/* Retract (operator dm 88 + agora 0097): the author's own
                 undo — the hub tombstones the words at every read and the
-                obligation dies. Own messages only (the hub enforces the
-                same rule; operator override lives hub-side). Two-step. */}
-            {m.sender === seat && !m.retracted ? (
+                obligation dies. Shown on your own messages, and on ANY
+                message when the HUB says this seat is an operator
+                (`/whoami.operator`) — visibility only: the hub still
+                decides, and its refusal renders verbatim. Two-step. */}
+            {(m.sender === seat || is_operator) && !m.retracted ? (
               <button
                 className={`btn btn_icon ${retract_nudge === m.id ? "team_danger" : ""}`}
                 title={
                   retract_nudge === m.id
                     ? "Click again to retract: the words are redacted for every reader and the message stops demanding anything"
-                    : "Retract this message (agents and entities will never read the words; two clicks)"
+                    : m.sender === seat
+                      ? "Retract this message (agents and entities will never read the words; two clicks)"
+                      : `Retract ${m.sender}'s message as operator (agents and entities will never read the words; two clicks)`
                 }
                 onClick={(e) => {
                   e.stopPropagation();
@@ -4535,6 +4721,23 @@ export function TeamPage(props: {
                 }}
               >
                 {retract_nudge === m.id ? "⌫ confirm retract" : "⌫ Retract"}
+              </button>
+            ) : null}
+            {/* Retract the whole TRAIL (agora 0097 retract_thread). Root
+                rows only — the trail is what the root heads — and behind
+                the repo's in-app confirm modal, never a bare two-click:
+                the blast radius (every message in the trail, for every
+                reader and agent) has to be READ before it is armed. */}
+            {opts.is_root && (m.sender === seat || is_operator) ? (
+              <button
+                className="btn btn_icon"
+                title="Retract this entire thread — the root and every reply beneath it"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  arm_thread_retraction(m);
+                }}
+              >
+                ⌫ Retract thread
               </button>
             ) : null}
             {/* Resolve (operator dm 21): declare the topic closed. Only on
@@ -4597,7 +4800,6 @@ export function TeamPage(props: {
     const replies_id = `thread-${t.root.id}`;
     const toggle_thread = () => set_open_threads((cur) => ({ ...cur, [t.root.id]: folded }));
     const s = summaries[t.root.id];
-    const reply_word = n === 1 ? "reply" : "replies";
     return (
       <article className={`team_thread_group team_thread_card ${n ? "has_replies" : ""} ${folded ? "team_thread_group_folded" : ""}`} key={t.root.id} aria-label={`Thread: ${thread_label}`}>
         {t.orphan ? (
@@ -4606,57 +4808,27 @@ export function TeamPage(props: {
           </div>
         ) : null}
         {/* The ROOT is the card's headline and always renders: it carries
-            its own author, badges, and body. A separate header line
-            repeating the same sentence was pure duplication. */}
-        {render_msg(t.root, { is_root: true })}
-        {/* One bar between root and trail: it owns the fold (replies only),
-            summarizes what folding hides, and holds the trail tools. */}
-        {n > 0 ? (
-          <div className="team_reply_bar">
-            <button
-              className="team_reply_toggle"
-              type="button"
-              onClick={toggle_thread}
-              disabled={filter !== "all"}
-              aria-controls={folded ? undefined : replies_id}
-              aria-expanded={!folded}
-              aria-label={`${folded ? "Show" : "Hide"} ${n} ${reply_word} to: ${thread_label}`}
-              title={filter !== "all" ? "Clear the filter before folding; matching messages stay visible" : folded ? `Show the ${n} ${reply_word}` : `Hide the ${n} ${reply_word}`}
-            >
-              <span className="team_thread_toggle_chevron" aria-hidden="true">{folded ? "▸" : "▾"}</span>
-              <span className="team_reply_toggle_label">
-                {n} {reply_word}
-              </span>
-            </button>
-            {unread_count > 0 ? (
-              <span className="team_thread_stat new" aria-label={`${unread_count} unread ${unread_count === 1 ? "reply" : "replies"} in this loaded view`} title={`${unread_count} unread ${unread_count === 1 ? "reply" : "replies"} in this loaded view`}>
-                <span aria-hidden="true">●</span> {unread_count}
-              </span>
-            ) : null}
-            {debt_count > 0 ? (
-              <span className="team_thread_stat debt" aria-label={`${debt_count} ${debt_count === 1 ? "reply needs" : "replies need"} your answer`} title={`${debt_count} ${debt_count === 1 ? "reply needs" : "replies need"} your answer`}>
-                <span aria-hidden="true">!</span> {debt_count}
-              </span>
-            ) : null}
-            {pending_question_count > 0 ? (
-              <span className="team_thread_stat ask" aria-label={`${pending_question_count} pending ${pending_question_count === 1 ? "question" : "questions"} in the replies`} title={`${pending_question_count} pending ${pending_question_count === 1 ? "question" : "questions"} in the replies, served by the Hub`}>
-                <span aria-hidden="true">?</span> {pending_question_count}
-              </span>
-            ) : null}
-            {ai_available ? (
-              <button
-                className="team_thread_tool team_summarize"
-                disabled={Boolean(s?.busy)}
-                title="LLM summary of this trail (root + replies) — read-only, never posts"
-                aria-label={s?.busy ? "Summarizing this thread" : `Summarize ${thread_count} messages`}
-                onClick={() => void summarize_thread(t)}
-              >
-                <span aria-hidden="true">✦</span>
-                <span>{thread_count}</span>
-              </button>
-            ) : null}
-          </div>
-        ) : null}
+            its own author, badges, and body — and, when the thread has a
+            trail, the fold control in its header. */}
+        {render_msg(t.root, {
+          is_root: true,
+          fold: n > 0
+            ? {
+                count: n,
+                folded,
+                disabled: filter !== "all",
+                label: thread_label,
+                replies_id,
+                unread: unread_count,
+                debt: debt_count,
+                asks: pending_question_count,
+                toggle: toggle_thread,
+                summarize: ai_available ? () => void summarize_thread(t) : undefined,
+                summarize_busy: Boolean(s?.busy),
+                summarize_total: thread_count,
+              }
+            : undefined,
+        })}
         {n > 0 && !folded ? (
           <div className="team_replies" id={replies_id}>
             {t.replies.map((r) => render_msg(r, { is_root: false }))}
@@ -4757,6 +4929,10 @@ export function TeamPage(props: {
       ) : null}
 
       <div className={`team_layout ${drawer ? "with_drawer" : ""} ${drawer === "leaderboard" ? "drawer_wide" : ""}`}>
+        {/* The rail is TWO panes stacked (operator ask 2026-08-20): channels
+            above, direct messages below, each scrolling independently. As one
+            list, a long channel set pushed every DM below the fold. */}
+        <div className="team_rail">
         <div className="pane team_channels_pane">
           <div className="pane_header">
             <span className="pane_title">Channels</span>
@@ -4900,15 +5076,31 @@ export function TeamPage(props: {
                 </div>
               );
             })}
-            {(() => {
-              // Direct messages: the operator's own dm:* channels (his
-              // seat, his ballots — c2240 made them first-class here).
-              const dms = channels.filter((c) => c.member && c.name.startsWith("dm:"));
-              if (!dms.length) return null;
-              return (
-                <>
-                  <div className="team_rail_section">Direct messages</div>
-                  {dms.map((c) => {
+            {/* (The empty/degraded rail state renders once at the top of
+                this list — team_rail_degraded, dm-99 F9.) */}
+          </div>
+        </div>
+
+        {(() => {
+          // Direct messages: the operator's own dm:* channels (his seat,
+          // his ballots — c2240 made them first-class here), in their own
+          // pane so they are reachable without scrolling past every room.
+          const dms = channels.filter((c) => c.member && c.name.startsWith("dm:"));
+          if (!dms.length) return null;
+          const dm_unread = dms.reduce((n, c) => n + (badges[c.name]?.unread ? 1 : 0), 0);
+          return (
+            <div className="pane team_dms_pane">
+              <div className="pane_header">
+                <span className="pane_title">Direct messages</span>
+                <span className="pane_count">{dms.length}</span>
+                {dm_unread ? (
+                  <span className="team_badge unread" title={`${dm_unread} direct message thread(s) with unread messages`}>
+                    {dm_unread}
+                  </span>
+                ) : null}
+              </div>
+              <div className="pane_body pane_body_list">
+                {dms.map((c) => {
                     const b = badges[c.name];
                     const peer = c.name.replace(/^dm:/, "").split("--").filter((p) => p !== seat).join("") || c.name;
                     const arming = leave_nudge === c.name;
@@ -4951,12 +5143,10 @@ export function TeamPage(props: {
                       </div>
                     );
                   })}
-                </>
-              );
-            })()}
-            {/* (The empty/degraded rail state renders once at the top of
-                this list — team_rail_degraded, dm-99 F9.) */}
-          </div>
+              </div>
+            </div>
+          );
+        })()}
         </div>
 
         <div className="pane team_thread_pane">
@@ -5019,8 +5209,12 @@ export function TeamPage(props: {
               </button>
               {verify_state && verify_state !== "running" && typeof verify_state === "object" && "ok" in verify_state ? (
                 verify_state.ok ? (
-                  <AfChip tone="success" size="sm" title={`Hash chain recomputed client-side over ${verify_state.hashed} hashed turns (${verify_state.legacy} pre-ledger); served head matches.`}>
-                    transcript intact ({verify_state.hashed})
+                  <AfChip
+                    tone="success"
+                    size="sm"
+                    title={`Hash chain recomputed client-side over ${verify_state.hashed - verify_state.redacted} hashed turns (${verify_state.legacy} pre-ledger${verify_state.redacted ? `, ${verify_state.redacted} retracted and linked rather than recomputed — a retracted turn serves a tombstone instead of the bytes it committed to` : ""}); served head matches.`}
+                  >
+                    transcript intact ({verify_state.hashed}{verify_state.redacted ? `, ${verify_state.redacted} retracted` : ""})
                   </AfChip>
                 ) : (
                   <AfChip
@@ -6212,11 +6406,35 @@ export function TeamPage(props: {
           </div>
         ) : null}
 
-        {drawer === "desk" ? (
+        {drawer === "desk" ? (() => {
+          // Scoping is a client-side FILTER (the /desk route is hub-wide
+          // by contract) — so the label, the visible rows and the "waits
+          // elsewhere" tail all derive from the one read we already hold.
+          const desk_scope_label = selected ? (selected.startsWith("dm:") ? `@${dm_peer_of(selected, seat) || "dm"}` : `#${selected}`) : "this channel";
+          const dv = desk_view !== null && desk_view !== "loading" ? desk_view : null;
+          const desk_rows = dv ? dv.rows.filter(desk_in_scope) : [];
+          const desk_satisfied = dv ? dv.satisfied.filter(desk_in_scope) : [];
+          const elsewhere = dv ? dv.rows.length - desk_rows.length : 0;
+          return (
           <div className="pane team_drawer_pane">
             <div className="pane_header">
               <span className="pane_title">Operator desk</span>
-              <span className="pane_count" title="One hub read across every channel and DM — never scoped to the open channel">hub-wide</span>
+              {/* The badge IS the switch (operator ask 2026-08-20): one
+                  click widens this channel's debts to the whole hub and
+                  back. The underlying read is always hub-wide — scoping
+                  is a filter, so toggling costs no round trip. */}
+              <button
+                className={`pane_count pane_count_btn ${desk_scope === "hub" ? "active" : ""}`}
+                onClick={() => set_desk_scope((s) => (s === "hub" ? "channel" : "hub"))}
+                aria-pressed={desk_scope === "hub"}
+                title={
+                  desk_scope === "hub"
+                    ? "Showing every channel and DM — click to narrow to the open channel"
+                    : `Showing only what waits on you in ${desk_scope_label} — click to see the whole hub`
+                }
+              >
+                {desk_scope === "hub" ? "hub-wide" : desk_scope_label}
+              </button>
               <span className="pane_header_actions" style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
                 <button className="btn" onClick={() => void load_desk()} title="Reload">
                   Refresh
@@ -6237,12 +6455,50 @@ export function TeamPage(props: {
               {desk_view === null && desk_error ? <div className="muted team_note">{desk_error}</div> : null}
               {desk_view !== null && desk_view !== "loading" ? (
                 <>
-                  {!desk_view.rows.length ? <div className="muted team_note">Nothing waits on you. Clear desk.</div> : null}
-                  {desk_view.rows.map((r: any, i) => {
+                  {!desk_rows.length ? (
+                    <div className="muted team_note">
+                      {desk_scope === "hub" || !desk_view.rows.length
+                        ? "Nothing waits on you. Clear desk."
+                        : `Nothing waits on you in ${desk_scope_label}.`}
+                    </div>
+                  ) : null}
+                  {desk_rows.map((r: any, i) => {
                     const mins = Number(r.age_minutes);
                     const age = Number.isFinite(mins) ? (mins < 60 ? `${Math.max(1, Math.round(mins))}m` : mins < 2880 ? `${Math.round(mins / 60)}h` : `${Math.round(mins / 1440)}d`) : "";
+                    // The whole row is the affordance (operator ask
+                    // 2026-08-20): a card you click, not a card with a
+                    // link in it. Rows without a channel have nowhere to
+                    // jump, so they stay inert (no hover, no focus).
+                    const jump = r.channel
+                      ? () => {
+                          focus_anchor.current = { message_id: r.id ? String(r.id) : undefined, seq: Number(r.seq) || undefined };
+                          // Same-channel jump consumes directly (P1-3):
+                          // set_selected(same) is a no-op and desk asks
+                          // usually cite the channel already open.
+                          if (String(r.channel) === selected) consume_focus_anchor();
+                          else set_selected(String(r.channel));
+                          set_drawer("");
+                        }
+                      : null;
                     return (
-                      <div className="team_desk_row" key={String(r.id || r.key || i)}>
+                      <div
+                        className={`team_desk_row${jump ? " clickable" : ""}`}
+                        key={String(r.id || r.key || i)}
+                        role={jump ? "button" : undefined}
+                        tabIndex={jump ? 0 : undefined}
+                        title={jump ? "Open the message that waits on you" : undefined}
+                        onClick={jump || undefined}
+                        onKeyDown={
+                          jump
+                            ? (e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  jump();
+                                }
+                              }
+                            : undefined
+                        }
+                      >
                         <div className="team_desk_row_head">
                           <span className={`chip mono ${String(r.kind) === "ask" ? "warn" : ""}`}>{String(r.kind || "ask")}</span>
                           <span className="mono muted">{String(r.who_waits || "?")}</span>
@@ -6250,7 +6506,7 @@ export function TeamPage(props: {
                               channel scope) — say so per row (operator ask
                               2026-08-20: without the origin the list read
                               as maybe-current-channel-only). */}
-                          {r.channel ? (
+                          {r.channel && desk_scope === "hub" ? (
                             <span className="mono muted team_desk_row_chan" title={`This item lives in ${String(r.channel)} — the desk gathers everything waiting on you across the whole hub`}>
                               {String(r.channel).startsWith("dm:") ? `@${dm_peer_of(String(r.channel), seat) || "dm"}` : `#${String(r.channel)}`}
                             </span>
@@ -6261,32 +6517,22 @@ export function TeamPage(props: {
                         </div>
                         <div className="team_desk_row_what">{String(r.what || "")}</div>
                         {r.one_action ? <div className="team_desk_row_needed muted">→ {String(r.one_action)}</div> : null}
-                        {r.channel ? (
-                          <button
-                            className="team_row_expand"
-                            onClick={() => {
-                              focus_anchor.current = { message_id: r.id ? String(r.id) : undefined, seq: Number(r.seq) || undefined };
-                              // Same-channel jump consumes directly (P1-3):
-                              // set_selected(same) is a no-op and desk asks
-                              // usually cite the channel already open.
-                              if (String(r.channel) === selected) consume_focus_anchor();
-                              else set_selected(String(r.channel));
-                              set_drawer("");
-                            }}
-                            title="Open the message that waits on you"
-                          >
-                            open ↗
-                          </button>
-                        ) : null}
                       </div>
                     );
                   })}
-                  {desk_view.satisfied.length ? (
+                  {/* Channel scope hides real debts — never silently.
+                      The tail says how many and widens the view. */}
+                  {elsewhere ? (
+                    <button className="team_row_expand team_desk_elsewhere" onClick={() => set_desk_scope("hub")}>
+                      {elsewhere} more {elsewhere === 1 ? "item waits" : "items wait"} on you elsewhere in the hub — show all
+                    </button>
+                  ) : null}
+                  {desk_satisfied.length ? (
                     <>
                       <div className="muted team_note team_desk_satisfied_head">
                         Satisfied — the hub observed each item's done-condition; these clear themselves:
                       </div>
-                      {desk_view.satisfied.map((r: any, i) => (
+                      {desk_satisfied.map((r: any, i) => (
                         <div className="team_desk_row satisfied" key={String(r.key || i)}>
                           <div className="team_desk_row_head">
                             <span className="chip mono ok">done</span>
@@ -6301,7 +6547,8 @@ export function TeamPage(props: {
               ) : null}
             </div>
           </div>
-        ) : null}
+          );
+        })() : null}
 
         {/* Vertical trapeze tabs (dm 53): always visible on the right edge —
             the discreet header icons they replace were the complaint. */}
@@ -6359,22 +6606,46 @@ export function TeamPage(props: {
             // Desk tab badge (agora dm#33 point 1): rows>0 = amber count
             // (things wait on you); satisfied>0 alone = green count
             // (waits you can close). No open-the-drawer-to-know.
+            // The count obeys the desk's SCOPE (operator ask 2026-08-20):
+            // with the drawer scoped to this channel, a hub-wide tab count
+            // would contradict the list it opens onto. The hub total still
+            // rides the tooltip, so a wider debt is never invisible.
             const dv = desk_view !== null && desk_view !== "loading" ? desk_view : null;
-            const waiting = dv ? dv.rows.length : 0;
-            const closable = dv ? dv.satisfied.length : 0;
+            const scope_label = selected ? (selected.startsWith("dm:") ? `@${dm_peer_of(selected, seat) || "dm"}` : `#${selected}`) : "this channel";
+            const waiting = dv ? dv.rows.filter(desk_in_scope).length : 0;
+            const closable = dv ? dv.satisfied.filter(desk_in_scope).length : 0;
+            const hub_waiting = dv ? dv.rows.length : 0;
+            const elsewhere = hub_waiting - waiting;
             return (
               <button
                 className={`team_drawer_tab ${drawer === "desk" ? "active" : ""}`}
                 onClick={() => toggle_drawer("desk")}
                 aria-pressed={drawer === "desk"}
-                aria-label={waiting ? `Open the operator desk — ${waiting} item(s) wait on you` : "Open the operator desk"}
-                title="Operator desk — everything blocked on YOU, with age (asks addressed to you, queue items, escalations)"
+                aria-label={
+                  waiting
+                    ? `Open the operator desk — ${waiting} item(s) wait on you${desk_scope === "hub" ? "" : ` in ${scope_label}`}`
+                    : "Open the operator desk"
+                }
+                title={
+                  `Operator desk — everything blocked on YOU, with age (asks addressed to you, queue items, escalations).\n` +
+                  (desk_scope === "hub"
+                    ? `Scope: the whole hub — ${hub_waiting} waiting.`
+                    : `Scope: ${scope_label} — ${waiting} waiting here${elsewhere ? `, ${elsewhere} elsewhere in the hub` : ""}. Switch the scope badge inside the desk to see all.`)
+                }
               >
                 {/* Count rides the label (operator ask 2026-08-20) — the
                     amber badge doubled it; the green satisfied badge keeps
                     its distinct meaning (waits you can CLOSE). */}
                 Desk{waiting ? ` (${waiting > 99 ? "99+" : waiting})` : ""}
-                {!waiting && closable ? <span className="team_desk_tab_badge ok" title="Satisfied queue items — waits you can close">{closable > 99 ? "99+" : closable}</span> : null}
+                {/* Scoped to a quiet channel while the hub is loud: a
+                    dim +N keeps the wider debt visible without claiming
+                    it waits HERE. */}
+                {!waiting && elsewhere ? (
+                  <span className="team_desk_tab_badge elsewhere" title={`${elsewhere} item(s) wait on you in other channels — widen the desk's scope badge to see them`}>
+                    +{elsewhere > 99 ? "99" : elsewhere}
+                  </span>
+                ) : null}
+                {!waiting && !elsewhere && closable ? <span className="team_desk_tab_badge ok" title="Satisfied queue items — waits you can close">{closable > 99 ? "99+" : closable}</span> : null}
               </button>
             );
           })()}
@@ -6382,6 +6653,54 @@ export function TeamPage(props: {
       </div>
 
       <FileViewer view={file_view} onClose={() => set_file_view(null)} onSave={save_fs_file} />
+      {retract_thread_arm ? (
+        <Modal
+          open={true}
+          title="Retract this whole thread?"
+          onClose={() => {
+            if (!retract_thread_arm.busy) set_retract_thread_arm(null);
+          }}
+          actions={
+            <>
+              <button className="btn" disabled={retract_thread_arm.busy} onClick={() => set_retract_thread_arm(null)}>
+                Cancel
+              </button>
+              <button className="btn btn_danger" disabled={retract_thread_arm.busy} onClick={() => void retract_thread()}>
+                {retract_thread_arm.busy ? "Retracting…" : "Retract thread"}
+              </button>
+            </>
+          }
+        >
+          <p className="team_del_path mono">
+            #{retract_thread_arm.root.seq} {String(retract_thread_arm.root.title || "").trim() || String(retract_thread_arm.root.body || "").replace(/\s+/g, " ").slice(0, 90) || "(no text)"}
+            <span className="muted">
+              {" "}
+              — by {retract_thread_arm.root.sender || "?"} · {retract_thread_arm.replies} repl
+              {retract_thread_arm.replies === 1 ? "y" : "ies"} loaded here
+            </span>
+          </p>
+          <p>
+            <strong>Every message in this trail</strong> — the root and every reply beneath it — is
+            redacted for <strong>every reader and every agent</strong>. The words stop being readable
+            on every hub surface: channel history, deliberate reads, inboxes, the owed ledger, the
+            board, the desk, the channel digest, search, and the verbatim ledger. Any obligation the
+            trail carried dies with it, so nothing keeps demanding an answer.
+          </p>
+          <p className="muted team_note">
+            History and ledger integrity are preserved: each message stays in place with its
+            position and hash, so the channel's chain still verifies — only the words become
+            unreadable. This cannot be undone from here.
+          </p>
+          <p className="muted team_note">
+            The hub decides and applies this in one act, over the <em>whole</em> trail as it knows
+            it — which may be larger than the {retract_thread_arm.replies} repl
+            {retract_thread_arm.replies === 1 ? "y" : "ies"} loaded in this view. If the trail
+            contains messages by other authors and this seat is not an operator, the hub refuses and
+            retracts <strong>nothing</strong>.
+          </p>
+          {retract_thread_arm.error ? <div className="page_error mono">{retract_thread_arm.error}</div> : null}
+        </Modal>
+      ) : null}
       {fs_del ? (
         <Modal
           open={true}

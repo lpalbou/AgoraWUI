@@ -25,6 +25,7 @@ npm run smoke
 - Keep Agora Hub routes native. Do not add a local server, forwarding layer, or alternate backend contract.
 - Do not persist browser bearer credentials, mint a WUI session, or add a WUI proxy. REST uses the direct bearer header; browser WebSocket uses the Hub's documented `/ws?token=KEY` lane from that in-memory key.
 - Preserve the Teams visual and interaction baseline. Update the compatibility tests and baseline record when the designated source changes.
+- Let the Hub decide collaboration state. Before computing anything from a message or envelope field — owed work, discharge, attention, authorization — check whether a Hub route already answers it (`/owed`, `/inbox`, `/channels/{c}/messages` row decorations, `/channels/{c}/digest`, `/whoami`). If one does, consume it; rendering a served verdict is presentation, deriving it again is a second source of truth, and an `||` between the two is a local guess. If none does, name the field the Hub would need to serve and keep the fallback's failure mode visible. See [Hub-decided state](docs/architecture.md#hub-decided-state).
 
 ## Changes
 

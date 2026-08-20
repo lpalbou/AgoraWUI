@@ -26,6 +26,10 @@ export type LedgerTurn = {
   reply_to: string | null;
   created_at: number;
   hash: string | null;
+  /** Rule 5 (agora 0097): the turn was retracted, so the served
+   *  title/body/data/status are a tombstone rather than what was hashed.
+   *  Its own hash is not recomputable — link through it. */
+  retracted?: boolean;
 };
 
 export type LedgerResponse = { channel: string; count: number; head: string; turns: LedgerTurn[] };
@@ -41,6 +45,11 @@ export type LedgerVerdict = {
   computed_head: string;
   hashed: number;
   legacy: number;
+  /** Turns that were LINKED, not recomputed: retracted rows serve a
+   *  tombstone instead of the hashed payload (protocol.md rule 5). Every
+   *  other turn is still recomputed, so a tamper elsewhere is still
+   *  caught; this count is what an honest verdict has to disclose. */
+  redacted: number;
 };
 
 /** The 15 hashed fields of a turn (protocol.md rule 1). Anything else the
@@ -186,12 +195,24 @@ export async function verify_ledger(ledger: LedgerResponse): Promise<LedgerVerdi
   let legacy = 0;
   let broken_at: number | null = null;
   let computed_head = "";
+  let redacted = 0;
   for (const turn of ledger.turns) {
     if (turn.hash === null || turn.hash === undefined) {
       // Unhashed rows are legitimate only BEFORE the first hashed turn.
       if (hashed > 0 && broken_at === null) broken_at = turn.seq;
       legacy += 1;
       prev = "";
+      continue;
+    }
+    if (turn.retracted === true) {
+      // Rule 5: the payload is a tombstone, so this leaf cannot be
+      // recomputed. Take the served hash as the link and keep checking
+      // everything else — reporting TAMPERED here would tell the operator
+      // their transcript was edited when the author merely unsaid a line.
+      prev = turn.hash;
+      computed_head = turn.hash;
+      redacted += 1;
+      hashed += 1;
       continue;
     }
     const expect = await turn_hash(prev, turn, channel);
@@ -201,5 +222,5 @@ export async function verify_ledger(ledger: LedgerResponse): Promise<LedgerVerdi
     hashed += 1;
   }
   const head_mismatch = broken_at === null && String(ledger.head || "") !== computed_head;
-  return { ok: broken_at === null && !head_mismatch, broken_at, head_mismatch, computed_head, hashed, legacy };
+  return { ok: broken_at === null && !head_mismatch, broken_at, head_mismatch, computed_head, hashed, legacy, redacted };
 }

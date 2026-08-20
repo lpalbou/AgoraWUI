@@ -110,6 +110,11 @@ export type FilterContext = {
   /** Viewer-scoped Hub `to_me` cues from /inbox. These include routed
    * delegate duties that are intentionally absent from the stored `to` list. */
   to_me_seqs?: Set<number>;
+  /** Seqs the Hub itself reports as owed by this seat (`/owed.to_answer`).
+   *  Vigilance consumes this verdict instead of re-deriving "still needs an
+   *  answer" from status, which the Hub settles with rules a client cannot
+   *  see. Absent (older Hub) falls back to the status-based reading. */
+  debt_seqs?: Set<number>;
 };
 
 function msg_matches(m: HubMessage, filter: TeamFilter, ctx: FilterContext): boolean {
@@ -131,18 +136,29 @@ function msg_matches(m: HubMessage, filter: TeamFilter, ctx: FilterContext): boo
     case "unread":
       return Boolean(ctx.unread_seqs?.has(m.seq) || ctx.unread_snapshot_seqs?.has(m.seq));
     case "asks":
-      return status === "open" || status === "blocked";
+      // "Expects an answer" is the Hub's verdict, not the status word:
+      // a settled ask keeps status=open while `has_resolved_reply` and an
+      // empty `pending_asks` say it is done. Absent fields (older Hub) fall
+      // back to the status alone.
+      if (status !== "open" && status !== "blocked") return false;
+      if (m.has_resolved_reply === true) return false;
+      return (m.pending_asks?.length ?? 1) > 0;
     case "fyi":
       return status === "fyi";
     case "resolved":
-      // A resolved REPLY is how threads actually close on this hub (the
-      // root keeps its own status) — filter_threads keeps the whole
-      // thread when any message matches, so both shapes surface.
-      return status === "resolved";
+      // Closure is the ROOT's state: the hub reports it as
+      // `has_resolved_reply` on the root, and a root posted resolved is
+      // closed by construction. Matching any reply's status word filed
+      // open, escalating threads under Resolved because one bystander
+      // answered with status=resolved. filter_threads applies this to the
+      // root only (see below).
+      return status === "resolved" || m.has_resolved_reply === true;
     case "to_me":
       return (Array.isArray(m.to) && m.to.includes(ctx.seat)) || Boolean(ctx.to_me_seqs?.has(m.seq));
     case "vigilance": {
-      const unanswered = (status === "open" || status === "blocked") && m.has_resolved_reply !== true;
+      const unanswered = ctx.debt_seqs
+        ? ctx.debt_seqs.has(m.seq)
+        : (status === "open" || status === "blocked") && m.has_resolved_reply !== true;
       const critical = m.critical === true;
       const to_me = (Array.isArray(m.to) && m.to.includes(ctx.seat)) || Boolean(ctx.to_me_seqs?.has(m.seq));
       // Hub escalation axes (backlog 0010): escalated/effective_urgency
@@ -160,6 +176,11 @@ function msg_matches(m: HubMessage, filter: TeamFilter, ctx: FilterContext): boo
  */
 export function filter_threads(threads: Thread[], filter: TeamFilter, ctx: FilterContext): Thread[] {
   if (filter === "all") return threads;
+  // "Resolved" is a property of the THREAD, so it reads the root alone: a
+  // single bystander reply carrying status=resolved must not file an open,
+  // escalating trail under Resolved. Every other lens is message-scoped —
+  // a matching reply keeps its context, which is the unit of reading.
+  if (filter === "resolved") return threads.filter((t) => msg_matches(t.root, filter, ctx));
   return threads.filter((t) => [t.root, ...t.replies].some((m) => msg_matches(m, filter, ctx)));
 }
 
@@ -185,13 +206,22 @@ export type ChannelBadges = {
  *  member, author included), but rendering that as "unread" is nonsense.
  *  Both unread readers drop own-seat envelopes so the channel badge, the
  *  Unread tab, the row accent, and the reply-bar counts stay one truth. */
-function not_own(inbox: Array<{ sender?: string }>, seat: string): Array<{ sender?: string }> {
+function not_own<T extends { sender?: string }>(inbox: T[], seat: string): T[] {
   const me = String(seat || "");
   return me ? inbox.filter((e) => String(e.sender || "") !== me) : inbox;
 }
 
-export function unread_by_channel(inbox_rows: Array<{ channel?: string; seq?: number; sender?: string }>, seat = ""): Record<string, number> {
-  const inbox = not_own(inbox_rows, seat) as Array<{ channel?: string; seq?: number }>;
+/** UNREAD means "not yet read". The Hub's inbox also re-pins obligations
+ *  the viewer HAS read so they cannot rot, and marks each one
+ *  `redelivery: true`. Counting those as unread made a read obligation
+ *  reappear as new on every poll. Feature-detected: an envelope without the
+ *  field (older Hub) keeps the previous behaviour. */
+function not_redelivered<T extends { redelivery?: boolean }>(inbox: T[]): T[] {
+  return inbox.filter((e) => e.redelivery !== true);
+}
+
+export function unread_by_channel(inbox_rows: Array<{ channel?: string; seq?: number; sender?: string; redelivery?: boolean }>, seat = ""): Record<string, number> {
+  const inbox = not_redelivered(not_own(inbox_rows, seat)) as Array<{ channel?: string; seq?: number }>;
   // ONE truth with the Unread-filter fold (operator dm 147: badge said 2,
   // tab said 1): count DISTINCT (channel, seq) — the hub's own client
   // contract ("dedup by per-channel seq high-water") because synthetic
@@ -216,8 +246,8 @@ export function unread_by_channel(inbox_rows: Array<{ channel?: string; seq?: nu
 
 /** Per-channel unread seq sets (the Unread filter + row dots ride the
  *  same inbox envelopes as the badge counts). */
-export function unread_seqs_by_channel(inbox_rows: Array<{ channel?: string; seq?: number; sender?: string }>, seat = ""): Record<string, Set<number>> {
-  const inbox = not_own(inbox_rows, seat) as Array<{ channel?: string; seq?: number }>;
+export function unread_seqs_by_channel(inbox_rows: Array<{ channel?: string; seq?: number; sender?: string; redelivery?: boolean }>, seat = ""): Record<string, Set<number>> {
+  const inbox = not_redelivered(not_own(inbox_rows, seat)) as Array<{ channel?: string; seq?: number }>;
   const out: Record<string, Set<number>> = {};
   for (const e of inbox) {
     const c = String(e.channel || "");

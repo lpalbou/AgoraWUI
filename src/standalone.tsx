@@ -4,7 +4,12 @@ import { createRoot } from "react-dom/client";
 import { HubClient } from "./lib/hub_client";
 import { parse_agora_key_cache, type CachedAgoraSeat } from "./lib/seat_key_cache";
 import { TeamPage } from "./ui/team_page";
-import "./ui/styles.css";
+// Both layers, imported directly. A CSS `@import` chain is fragile when a
+// bundler inlines the sheet into a <style> tag (relative imports then
+// resolve against the page, not the stylesheet); dist/styles.css is
+// generated as a real concatenation for npm consumers.
+import "./ui/theme.css";
+import "./ui/team.css";
 
 const DEFAULT_HUB = "http://127.0.0.1:8765";
 

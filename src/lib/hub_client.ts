@@ -8,7 +8,13 @@
  * second authentication scheme. */
 export const AGORA_WUI_CLIENT_HEADER = "agora-wui/0.2.0";
 
-export type HubMeta = { ok: boolean; hub_url: string; seat: string; seat_key_present: boolean };
+/** `operator` is the HUB's own answer about this seat (`/whoami.operator`),
+ *  carried through for VISIBILITY decisions only — which controls a console
+ *  bothers to render. It is never an authorization check: every act is still
+ *  decided by the hub, and a refusal renders verbatim. An older hub that
+ *  omits the field reads as `false`, which hides a control the hub would
+ *  have allowed — the safe direction to be wrong in. */
+export type HubMeta = { ok: boolean; hub_url: string; seat: string; seat_key_present: boolean; operator: boolean };
 
 /** Hub /healthz — the protocol pin source (protocol.md: clients compare
  *  the advertised `protocol` against their own and WARN on mismatch,
@@ -364,14 +370,20 @@ export class HubClient {
   }
 
   async meta(): Promise<HubMeta> {
-    const identity = await this._fetch("hub_whoami", "/whoami") as { id?: string };
+    const identity = await this._fetch("hub_whoami", "/whoami") as { id?: string; operator?: boolean };
     const origin = this.base_url || (typeof window === "undefined" ? "" : window.location.origin);
     // Evidence-derived, never asserted: a served identity proves an
     // authenticated path exists — true in direct mode (bearer) AND behind
     // a host proxy that holds the key server-side. `Boolean(bearer_token)`
     // would lie in proxy mode; a hardcoded true made the missing-key
     // diagnostic unreachable everywhere.
-    return { ok: true, hub_url: origin, seat: String(identity?.id || ""), seat_key_present: Boolean(identity?.id) };
+    return {
+      ok: true, hub_url: origin, seat: String(identity?.id || ""),
+      seat_key_present: Boolean(identity?.id),
+      // Carried, never re-derived: the console shows an operator the controls
+      // the hub would honor. The hub still decides every act.
+      operator: Boolean(identity?.operator),
+    };
   }
 
   /** Unauthenticated on the hub; forwards even without a seat key. */
@@ -816,6 +828,21 @@ export class HubClient {
    *  retracted:true on every read. 404 on pre-0.12.16 hubs. */
   async retract_message(channel: string, message_id: string): Promise<any> {
     return await this._fetch("hub_retract", `/channels/${encodeURIComponent(channel)}/messages/${encodeURIComponent(message_id)}/retract`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  /** Retract a message AND every reply beneath it (agora 0097 thread
+   *  retraction), in ONE hub transaction. The hub walks the trail from its
+   *  own rows — never from this console's loaded window — and applies the
+   *  SAME authority rule per member: an operator may retract anyone's; a
+   *  non-operator whose trail contains another author is refused 403 with
+   *  NOTHING retracted. The console never pre-judges that: it calls, and
+   *  renders whatever the hub answers. Returns {count, already_retracted,
+   *  skipped_non_messages, messages}. 404 on hubs predating the verb. */
+  async retract_thread(channel: string, message_id: string): Promise<any> {
+    return await this._fetch("hub_retract_thread", `/channels/${encodeURIComponent(channel)}/messages/${encodeURIComponent(message_id)}/retract_thread`, {
       method: "POST",
       body: JSON.stringify({}),
     });

@@ -28,6 +28,17 @@ const glyph: Record<string, string> = {
 /** Minimal local icon surface used by the extracted Team view.
  * It deliberately has no AbstractFramework dependency. */
 export function Icon({ name, size = 14, className, title }: { name: string; size?: number; className?: string; title?: string }): React.ReactElement {
+  if (name === "chat") {
+    /* Speech bubble: the reply-trail marker on a thread card. Inline so it
+       tints with currentColor and needs no icon package. */
+    return (
+      <span className={className} title={title} aria-hidden="true" style={{ display: "inline-flex", lineHeight: 1 }}>
+        <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor">
+          <path d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4v4l5.2-4H20a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z" />
+        </svg>
+      </span>
+    );
+  }
   const thumb = name === "thumbsUp" || name === "thumbsUpFilled" || name === "thumbsDown" || name === "thumbsDownFilled";
   if (thumb) {
     const filled = name.endsWith("Filled");

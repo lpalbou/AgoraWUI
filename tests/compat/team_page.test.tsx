@@ -961,6 +961,9 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
         { channel: "commons", seq: 1, status: "open", addressed: true, to_me: false },
         { channel: "commons", seq: 2, status: "open", addressed: false, to_me: true },
       ],
+      // Debt is the HUB's verdict (/owed.to_answer), not a shape the client
+      // re-derives from the envelope.
+      owed: { to_answer: [{ channel: "commons", seq: 2 }], to_consume: [], waiting_on: [], counts: { to_answer: 1, to_consume: 0 } },
     });
     render_page();
     await screen.findByText("delegated to this seat");
@@ -969,6 +972,57 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^@me/ }));
     await screen.findByText("delegated to this seat");
     expect(screen.queryByText("for someone else")).toBeNull();
+  });
+
+  it("never invents a debt the Hub does not hold — a peer's reply to your own message is not 'needs reply'", async () => {
+    // Live case (dm:continuum--laurent#209): a peer replied to laurent's
+    // own ask, addressed to laurent. The hub exempts it ("your debt for an
+    // answer is CONSUMPTION, not another reply") and leaves it out of
+    // /owed.to_answer — but a client-side `status=reply && to_me` rule
+    // cannot see the exemption and painted NEEDS REPLY on it.
+    stub_hub({
+      messages: [
+        { ...base, id: "my-ask", seq: 175, sender: "laurent", status: "open", title: "my question", body: "q", to: ["continuum"], reply_to: null },
+        { ...base, id: "their-answer", seq: 209, sender: "continuum", status: "reply", title: "investigation reopened", body: "a", to: ["laurent"], reply_to: "my-ask" },
+      ],
+      inbox: [{ channel: "commons", seq: 209, sender: "continuum", status: "reply", addressed: true, to_me: true }],
+      owed: { to_answer: [], to_consume: [], waiting_on: [], counts: { to_answer: 0, to_consume: 0 } },
+    });
+    render_page();
+    await screen.findByText("my question");
+    fireEvent.click(screen.getByRole("button", { name: /^Show 1 reply/ }));
+    await screen.findByText("investigation reopened");
+    expect(screen.queryByText("needs reply")).toBeNull();
+    expect(screen.queryByText("decline")).toBeNull();
+  });
+
+  it("takes discharge from the Hub, not from replies visible in the window", async () => {
+    // The Hub computes discharge with operator/delegate authority: a
+    // bystander's "on it" does not settle an operator's commission. The old
+    // local fold ("any other sender replied ⇒ answered") contradicted it on
+    // 30 live messages, painting escalating asks as handled.
+    stub_hub({
+      messages: [
+        { ...base, id: "cmd", seq: 1, sender: "laurent", status: "open", title: "five requirements", body: "do it", reply_to: null, has_resolved_reply: false },
+        { ...base, id: "ack", seq: 2, sender: "core", status: "reply", title: "on it", body: "starting", reply_to: "cmd" },
+      ],
+    });
+    render_page();
+    await screen.findByText("five requirements");
+    // The Hub says NOT resolved, so no answered chip — regardless of the reply.
+    expect(screen.queryByText("answered")).toBeNull();
+  });
+
+  it("still calms an ask when the Hub makes no statement (older hub)", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "old", seq: 1, sender: "core", status: "open", title: "legacy ask", body: "q", reply_to: null, has_resolved_reply: null },
+        { ...base, id: "oldr", seq: 2, sender: "gateway", status: "reply", title: "an answer", body: "a", reply_to: "old" },
+      ],
+    });
+    render_page();
+    await screen.findByText("legacy ask");
+    await screen.findByText("answered");
   });
 
   it("groups replies under their root and counts threads, not messages", async () => {
@@ -1006,7 +1060,10 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     expect(screen.queryByText("child topic")).toBeNull();
     expect(screen.queryByText("reply body")).toBeNull();
     const collapsed = screen.getByRole("button", { name: "Show 1 reply to: parent topic" });
-    expect(collapsed.textContent).toContain("1 reply");
+    // Visible label is the chat icon + count; the full sentence is the
+    // accessible name, so screen readers still get "Show 1 reply to: …".
+    expect(collapsed.textContent).toContain("1");
+    expect(collapsed.querySelector("svg")).toBeTruthy();
     expect(collapsed.getAttribute("aria-expanded")).toBe("false");
     expect(collapsed.hasAttribute("aria-controls")).toBe(false);
     fireEvent.click(collapsed);
@@ -1037,7 +1094,7 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     expect(screen.queryByText("reply A1")).toBeNull();
     expect(screen.queryByText("reply B1")).toBeNull();
     expect(document.querySelectorAll(".team_replies")).toHaveLength(0);
-    expect(document.querySelectorAll(".team_reply_bar")).toHaveLength(2);
+    expect(document.querySelectorAll(".team_fold_group")).toHaveLength(2);
     // Opening one trail leaves the other folded.
     fireEvent.click(screen.getByRole("button", { name: "Show 1 reply to: topic A" }));
     await screen.findByText("reply A1");
@@ -1087,13 +1144,86 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     expect(document.getElementById("hubmsg-theirs")?.className).toContain("unread");
   });
 
+  it("splits the rail into a channels pane and a direct-messages pane that scroll separately", async () => {
+    stub_hub({
+      channels: [
+        { name: "commons", private: false, member: true, member_count: 14, last_seq: 10, last_at: 3 },
+        { name: "optimize-code", private: false, member: true, member_count: 6, last_seq: 8, last_at: 2 },
+        { name: "dm:code-tui--laurent", private: true, member: true, member_count: 2, last_seq: 4, last_at: 1 },
+      ],
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+    const rooms = document.querySelector(".team_channels_pane")!;
+    const dms = document.querySelector(".team_dms_pane")!;
+    expect(rooms).toBeTruthy();
+    expect(dms).toBeTruthy();
+    // Each pane owns its own scroll container, so a long room list can
+    // never push direct messages below the fold.
+    expect(rooms.querySelector(".pane_body")).toBeTruthy();
+    expect(dms.querySelector(".pane_body")).toBeTruthy();
+    // Rooms live in the rooms pane, DMs in the DM pane — never mixed.
+    expect(rooms.textContent).toContain("#optimize-code");
+    expect(rooms.textContent).not.toContain("@code-tui");
+    expect(dms.textContent).toContain("@code-tui");
+    expect(dms.textContent).not.toContain("#optimize-code");
+  });
+
+  it("shows no direct-messages pane when the seat has no DMs", async () => {
+    stub_hub({
+      channels: [{ name: "commons", private: false, member: true, member_count: 14, last_seq: 10, last_at: 3 }],
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+    expect(document.querySelector(".team_dms_pane")).toBeNull();
+    expect(document.querySelector(".team_channels_pane")).toBeTruthy();
+  });
+
+  it("folds and unfolds when the card's header line is clicked", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "hdr-root", seq: 1, sender: "core", status: "open", title: "header topic", body: "root body", reply_to: null },
+        { ...base, id: "hdr-reply", seq: 2, sender: "gateway", status: "reply", title: "child topic", body: "reply body", reply_to: "hdr-root" },
+      ],
+    });
+    render_page();
+    await screen.findByText("header topic");
+    const head = document.querySelector(".team_row_head.foldable")!;
+    expect(head).toBeTruthy();
+    expect(screen.queryByText("child topic")).toBeNull();
+    fireEvent.click(head);
+    await screen.findByText("child topic");
+    fireEvent.click(head);
+    expect(screen.queryByText("child topic")).toBeNull();
+  });
+
+  it("does not fold when a control inside the header is clicked", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "btn-root", seq: 1, sender: "core", status: "open", title: "button topic", body: "root body", reply_to: null },
+        { ...base, id: "btn-reply", seq: 2, sender: "gateway", status: "reply", title: "child topic", body: "reply body", reply_to: "btn-root" },
+      ],
+    });
+    render_page();
+    await screen.findByText("button topic");
+    // Open via the real control, then click it again: one toggle per click,
+    // never two (the header handler must not double-fire through it).
+    const toggle = screen.getByRole("button", { name: /^Show 1 reply/ });
+    fireEvent.click(toggle);
+    await screen.findByText("child topic");
+    fireEvent.click(screen.getByRole("button", { name: /^Hide 1 reply/ }));
+    expect(screen.queryByText("child topic")).toBeNull();
+  });
+
   it("gives a reply-less root no fold bar at all", async () => {
     stub_hub({
       messages: [{ ...base, id: "solo", seq: 1, sender: "core", status: "fyi", title: "standalone", body: "no replies", reply_to: null }],
     });
     render_page();
     await screen.findByText("standalone");
-    expect(document.querySelector(".team_reply_bar")).toBeNull();
+    // No trail, no marker: a reply-less root carries no fold control.
+    expect(document.querySelector(".team_fold_group")).toBeNull();
+    expect(document.querySelector(".team_row_head.foldable")).toBeNull();
   });
 
   it("renders separate thread cards with only Hub-derived header badges", async () => {

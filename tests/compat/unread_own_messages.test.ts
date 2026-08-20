@@ -39,3 +39,24 @@ describe("own messages are never unread", () => {
     expect(unread_by_channel(rows, "laurent")).toEqual({ b: 1 });
   });
 });
+
+describe("already-read obligations are not unread", () => {
+  // The Hub re-pins obligations past the cursor so they cannot rot, and
+  // marks each re-surface `redelivery: true`. Counting those as unread made
+  // an obligation the operator had read reappear as new on every poll.
+  const inbox = [
+    { channel: "commons", seq: 10, sender: "core" },                       // genuinely new
+    { channel: "commons", seq: 11, sender: "core", redelivery: true },     // read, still owed
+    { channel: "commons", seq: 12, sender: "core", redelivery: false },
+  ];
+
+  it("excludes redelivered envelopes from the badge and the unread set", () => {
+    expect(unread_by_channel(inbox, "laurent")).toEqual({ commons: 2 });
+    expect([...unread_seqs_by_channel(inbox, "laurent").commons].sort((a, b) => a - b)).toEqual([10, 12]);
+  });
+
+  it("keeps envelopes from hubs that do not serve the field", () => {
+    const legacy = [{ channel: "commons", seq: 10, sender: "core" }, { channel: "commons", seq: 11, sender: "core" }];
+    expect(unread_by_channel(legacy, "laurent")).toEqual({ commons: 2 });
+  });
+});

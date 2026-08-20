@@ -901,6 +901,42 @@
   color: var(--text-secondary);
 }
 
+/* A pane_count that IS a control (operator ask 2026-08-20: the desk's
+   scope switch rides its own badge) — reads as the badge it replaces
+   until you hover it, then it reads as a pill you can press. */
+.pane_count_btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  padding: 1px 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+
+.pane_count_btn:hover {
+  border-color: var(--ui-border-2, rgba(148, 163, 184, 0.5));
+  background: var(--ui-surface-2, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary);
+}
+
+.pane_count_btn.active {
+  border-color: color-mix(in srgb, var(--accent, #3b82f6) 45%, transparent);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 22%, transparent);
+  color: var(--text-primary);
+}
+
+.pane_count_btn:focus-visible {
+  outline: 2px solid var(--accent, #79c7ff);
+  outline-offset: 1px;
+}
+
 /* Pane subtitle (backlog 0010: pane_count doubled as a tagline slot) —
    PROSE next to a pane title. Same scale as the count, muted + italic so
    counts and sentences read as different things. */
@@ -1343,8 +1379,38 @@
   gap: 1px;
 }
 
-.team_channels_pane {
+/* Rail = two stacked panes in the grid's first column. Each scrolls on its
+   own, so a long channel list never buries direct messages (operator ask
+   2026-08-20). Channels take the larger share; the DM pane keeps a floor so
+   it stays usable, and disappears entirely when there are no DMs. */
+.team_rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   min-height: 0;
+  min-width: 0;
+}
+
+/* Channels are sized by their content but never take more than half the
+   rail (operator ask 2026-08-20); direct messages take whatever is left. */
+.team_channels_pane {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 50%;
+}
+
+.team_dms_pane {
+  flex: 1 1 auto;
+  min-height: min(160px, 35%);
+}
+
+/* A rail pane alone in the column takes the whole height. */
+.team_rail > .team_channels_pane:only-child {
+  flex: 1 1 auto;
+}
+
+.team_dms_pane .pane_header .team_badge {
+  margin-left: 4px;
 }
 
 .team_channel {
@@ -1551,26 +1617,29 @@
   background: color-mix(in srgb, var(--bg-secondary) 42%, transparent);
 }
 
-/* One bar between the root and its trail: it owns the fold (replies only)
-   and summarizes what folding hides. The card's headline is the ROOT ROW
-   itself — no header line repeating the same sentence above it. */
-.team_reply_bar {
-  display: flex;
+/* Trail marker in the card's header, at its trailing edge: reply-scoped
+   state, the optional summarize action, and the chat-icon fold control.
+   The card's headline is the ROOT ROW itself. */
+.team_fold_group {
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 6px 0 2px;
-  padding: 4px 2px 0 34px; /* 34px aligns with the message body gutter */
-  border-top: 1px solid color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+/* The header line is a convenience click target for folding; the button
+   inside it remains the accessible control. */
+.team_row_head.foldable {
+  cursor: pointer;
 }
 
 .team_reply_toggle {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  min-height: 24px;
-  padding: 2px 9px 2px 6px;
+  gap: 4px;
+  min-height: 20px;
+  padding: 1px 7px 1px 6px;
   border: 1px solid color-mix(in srgb, var(--accent, #79c7ff) 34%, var(--bg-tertiary));
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent, #79c7ff) 10%, transparent);
@@ -1638,11 +1707,6 @@
 
 .team_thread_group .team_replies .team_row_body {
   color: var(--text-secondary);
-}
-
-/* Trail tools sit on the reply bar, pushed to its trailing edge. */
-.team_reply_bar .team_thread_tool {
-  margin-left: auto;
 }
 
 .team_thread_tool {
@@ -2459,14 +2523,6 @@
 }
 
 /* Rail section header (Direct messages). */
-.team_rail_section {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 8px 8px 2px;
-}
-
 /* Members roster in About. */
 .team_members {
   border-top: 1px solid var(--bg-tertiary);
@@ -2942,8 +2998,12 @@
     display: none;
   }
 
-  .team_channels_pane {
-    max-height: 200px;
+  .team_rail {
+    max-height: 220px;
+  }
+
+  .team_dms_pane {
+    min-height: 0;
   }
 }
 
@@ -4948,6 +5008,24 @@ a.team_attach_dl:hover {
   gap: 3px;
   font-size: var(--font-size-sm);
 }
+
+/* The row IS the button (operator ask): rows that carry a channel jump
+   to the waiting message on click — hover/focus say so, no inner link. */
+.team_desk_row.clickable {
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.team_desk_row.clickable:hover {
+  border-color: var(--ui-border-2, rgba(148, 163, 184, 0.5));
+  background: var(--ui-surface-2, rgba(255, 255, 255, 0.05));
+}
+.team_desk_row.clickable:focus-visible {
+  outline: 2px solid var(--accent, #79c7ff);
+  outline-offset: 1px;
+}
+
 .team_desk_row_head {
   display: flex;
   gap: 8px;
@@ -4976,6 +5054,12 @@ a.team_attach_dl:hover {
   opacity: 0.6;
 }
 
+/* Channel scope never hides debts silently: the tail counts what sits
+   outside the open channel and widens the view in one click. */
+.team_desk_elsewhere {
+  margin: 2px 2px 4px;
+}
+
 .team_desk_satisfied_head {
   margin-top: 10px;
   padding: 0 2px 4px;
@@ -5001,6 +5085,14 @@ a.team_attach_dl:hover {
 .team_desk_tab_badge.ok {
   background: rgba(34, 197, 94, 0.16);
   color: var(--success, #22c55e);
+}
+
+/* Debts outside the desk's current scope: present, not urgent — muted so
+   it never reads as "waiting in THIS channel". */
+.team_desk_tab_badge.elsewhere {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-muted, var(--text-secondary));
+  font-weight: 600;
 }
 
 /* Top-voted view (laurent dm#137): flat hub-ranked rows with a rank line. */

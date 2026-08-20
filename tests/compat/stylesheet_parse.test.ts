@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import postcss from "postcss";
 
 describe("shipped stylesheets parse as valid CSS", () => {
-  for (const name of ["theme.css", "team.css", "styles.css"]) {
+  for (const name of ["theme.css", "team.css"]) {
     it(`src/ui/${name}`, () => {
       const source = readFileSync(resolve(import.meta.dirname, `../../src/ui/${name}`), "utf8");
       expect(() => postcss.parse(source, { from: name })).not.toThrow();

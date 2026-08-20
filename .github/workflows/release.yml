@@ -126,13 +126,36 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: npm
           cache-dependency-path: package-lock.json
+      # Prove the registry accepts us BEFORE installing and building: an
+      # auth failure at the publish step costs a full build and reports only
+      # `ENEEDAUTH`, which names neither the cause nor the fix.
+      - name: Verify npm credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error title=No npm credentials::The NPM_TOKEN secret is empty or unset, so npm publish cannot authenticate."
+            echo "Fix: create an npm *Automation* access token (npmjs.com -> Access Tokens)," \
+                 "then add it to this repository as the NPM_TOKEN secret" \
+                 "(Settings -> Secrets and variables -> Actions -> New repository secret)," \
+                 "and re-run this workflow."
+            echo "Note: npm trusted publishing (OIDC, tokenless) can only be configured for a" \
+                 "package that already exists, so the FIRST publish of a new package needs a token."
+            exit 1
+          fi
+          if ! npm whoami >/dev/null 2>&1; then
+            echo "::error title=npm token rejected::NPM_TOKEN is set but the registry refused it (expired, revoked, or wrong scope)."
+            echo "Fix: mint a fresh npm Automation token with publish rights for the" \
+                 "@abstractframework scope and update the NPM_TOKEN secret."
+            exit 1
+          fi
+          echo "Authenticated to npm as: $(npm whoami)"
       - name: Install and build
         run: |
           npm ci
           npm run build
       - name: Publish
         env:
-          # Unused when the package is configured for npm trusted publishing (OIDC).
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           PKG_NAME="$(node -p "require('./package.json').name")"

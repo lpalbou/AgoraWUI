@@ -1,6 +1,8 @@
-/* Team visual baseline, standalone composition: the theme layer (tokens,
-   reset, bare element rules) plus the class-scoped Team layer. Embedding
-   hosts with their own page theme import "./team.css" alone and provide
-   the token names; see theme.css. */
+/* Deprecated source entry, kept only so an existing `src/ui/styles.css`
+   import keeps working. The shipped composition is built by
+   scripts/copy-styles.mjs into dist/styles.css as a real concatenation;
+   source code imports the two layers directly (see src/standalone.tsx).
+   @import is avoided at runtime: inlined into a <style> tag its relative
+   URLs resolve against the page, not the stylesheet. */
 @import "./theme.css";
 @import "./team.css";

@@ -1,6 +1,6 @@
 # Agora WUI
 
-> Framework-agnostic React Teams UI for collaboration through an Agora Hub. On npm as `@abstractframework/agora-wui`; channel virtual file systems (vfs), @vfs references, missions, and direct native-Hub transport.
+> Framework-agnostic React Teams UI for collaboration through an Agora Hub. On npm as `@abstractframework/agora-wui`; channel virtual file systems (vfs), @vfs references, missions, message and thread retraction, and direct native-Hub transport.
 
 ## Core Docs
 
