@@ -22,7 +22,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { AfChip, ChatComposer, Icon, Markdown } from "./primitives";
-import { HubClient, type HubAttachment, type HubChannel, type HubChannelInfo, type HubFsEntry, type HubFsFile, type HubHealth, type HubMessage, type HubReputationBoard, type HubReputationVote, type HubSearchHit, type HubSearchReport } from "../lib/hub_client";
+import { HubClient, type HubAttachment, type HubChannel, type HubChannelInfo, type HubCharterDebt, type HubCharterPointer, type HubFsEntry, type HubFsFile, type HubHealth, type HubMessage, type HubPhaseRow, type HubReputationBoard, type HubReputationVote, type HubSearchHit, type HubSearchReport } from "../lib/hub_client";
 import { FileViewer, resolve_file_mode, type FileView } from "./team_file_viewer";
 import { Modal } from "./modal";
 import { MemoMarkdown } from "./memo_markdown";
@@ -310,6 +310,14 @@ function save_drafts(drafts: Record<string, ComposeDraft>): void {
  *  refuse — skew is expected mid-upgrade; the string gates MEANING. */
 const PINNED_PROTOCOL = "agora/0.4";
 
+/** The hub's reserved scope name for the hub-wide charter, as it appears in
+ *  `/owed.charters[].scope` — every other scope is a channel name. */
+const HUB_CHARTER_SCOPE = "hub";
+/** The reserved channel-fs path a room's charter lives at. Reading its HEAD
+ *  is what records the receipt, which is why the console opens the charter
+ *  through the file viewer rather than showing a cached copy. */
+const CHANNEL_CHARTER_PATH = "channel/charter.md";
+
 function ago(ts?: number): string {
   if (!ts) return "";
   const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
@@ -416,7 +424,16 @@ export function TeamPage(props: {
   const advisor_fn = props.advisor;
   const ai_available = Boolean(advisor_fn);
 
-  const [meta, set_meta] = useState<{ seat: string; seat_key_present: boolean; operator: boolean } | null>(null);
+  const [meta, set_meta] = useState<{
+    seat: string;
+    seat_key_present: boolean;
+    operator: boolean;
+    /** The hub's own answers about this seat (`/whoami`): the operator's
+     *  standing charge for it, and the hub-charter pointer. Both rendered,
+     *  never re-derived — the console cannot author either. */
+    mission?: string;
+    hub_charter?: HubCharterPointer | null;
+  } | null>(null);
   const meta_ref = useRef<typeof meta>(null);
   useEffect(() => {
     meta_ref.current = meta;
@@ -431,6 +448,30 @@ export function TeamPage(props: {
   /** Sticky hub debts per channel (open/blocked + addressed directives):
    *  pinned past cursor acks; clear only when answered (dm 111). */
   const [debt_map, set_debt_map] = useState<Record<string, Set<number>>>({});
+  /** channel -> seq -> `asks_naming_you`: the ask ids the HUB says are this
+   *  seat's on that message (`ObligationRow.asks_naming_you`). A message's
+   *  `pending_asks` is the GLOBAL set — on a root canvassing several seats
+   *  it includes asks addressed to other seats, and discharging one of
+   *  those is refused ("you may not discharge ask ids not addressed to
+   *  you"), taking the whole action down with it. The hub computes the
+   *  subset; keeping it is how the console stops re-deriving it wrong. */
+  const [owed_asks, set_owed_asks] = useState<Record<string, Record<number, string[]>>>({});
+  /** channel -> seq -> the hub's ASKER-side row for one of the viewer's own
+   *  threads (`/owed.to_close`): fully discharged, not yet closed. Carries
+   *  who refused and which asks (0153). Without it a thread every seat
+   *  DECLINED reads as settled-and-answered to the one person who needed to
+   *  know it was refused — the asker. */
+  const [close_map, set_close_map] = useState<
+    Record<string, Record<number, { declined_asks: string[]; declined_by: string[]; answered_by: string }>>
+  >({});
+  /** Charters this seat has not read at their current version
+   *  (`/owed.charters`, hub 0146/2). The hub-scope row is the standing role
+   *  model; a channel row with `gated` is a room where the hub is ALREADY
+   *  refusing this seat's posts (409) until it reads. Self-clearing at the
+   *  hub: the read records the receipt, so the next report drops the row —
+   *  which is why the console never marks one read locally. Empty on hubs
+   *  that serve no `charters`, and the surface simply does not appear. */
+  const [charter_debts, set_charter_debts] = useState<HubCharterDebt[]>([]);
   /** Hub-computed, viewer-scoped address cues. */
   const [to_me_map, set_to_me_map] = useState<Record<string, Set<number>>>({});
   /** Hub-escalated seqs per channel (backlog 0010): escalated /
@@ -721,7 +762,7 @@ export function TeamPage(props: {
     }
   }
   /** Members roster (About pane; operator c2240) + moderation state. */
-  const [members, set_members] = useState<Array<{ agent_id?: string; about?: string; role?: string }> | null>(null);
+  const [members, set_members] = useState<Array<{ agent_id?: string; about?: string; mission?: string; role?: string }> | null>(null);
   /** Active kick/ban rows for the channel — the moderation UNDO surface
    *  (a block removes the member row hub-side, so undo needs its own
    *  list; adversary P1). */
@@ -934,6 +975,82 @@ export function TeamPage(props: {
    *  message; adversary find). */
   const scroll_pending = useRef(false);
 
+  /** Read an `/owed` report into the two pieces of state it decides: which
+   *  messages wear "needs reply", and which ask ids are THIS seat's on each
+   *  of them. One parse, so a targeted refresh and the badge cadence can
+   *  never disagree about the same report. */
+  function apply_owed(report: any): void {
+    const rows = report?.to_answer || [];
+    const next: Record<string, Set<number>> = {};
+    const next_asks: Record<string, Record<number, string[]>> = {};
+    for (const row of rows) {
+      const channel = String(row?.channel || "");
+      const seq = Number(row?.seq);
+      if (!channel || !Number.isFinite(seq)) continue;
+      (next[channel] ||= new Set()).add(seq);
+      // Three distinct states, and flattening any two of them breaks
+      // Decline (the repo's usual null-means-no-statement rule):
+      //   present + non-empty -> these ask ids are this seat's;
+      //   present + EMPTY     -> the hub says NONE here are — it keeps a
+      //     to_answer row whenever the seat is in `to`, whether or not any
+      //     ask names it per-ask, so this is a real answer, and the right
+      //     discharge is a plain reply carrying no discharge field;
+      //   ABSENT              -> a hub too old to serve the field made no
+      //     statement, so fall back to the message's global set.
+      // Collapsing empty into absent sent Decline back to the global set
+      // and into the "may not discharge ask ids not addressed to you" 400.
+      if (Array.isArray(row?.asks_naming_you)) {
+        (next_asks[channel] ||= {})[seq] = row.asks_naming_you.map(String).filter(Boolean);
+      }
+    }
+    // Asker side. Same report, same parse — the two halves of a decline
+    // must never be read from two places that can disagree.
+    const next_close: Record<string, Record<number, { declined_asks: string[]; declined_by: string[]; answered_by: string }>> = {};
+    for (const row of report?.to_close || []) {
+      const channel = String(row?.channel || "");
+      const seq = Number(row?.seq);
+      if (!channel || !Number.isFinite(seq)) continue;
+      (next_close[channel] ||= {})[seq] = {
+        declined_asks: Array.isArray(row?.declined_asks) ? row.declined_asks.map(String) : [],
+        declined_by: Array.isArray(row?.declined_by) ? row.declined_by.map(String) : [],
+        answered_by: String(row?.answered_by || ""),
+      };
+    }
+    // Charter debts (hub 0146/2) ride the same report — one parse, so the
+    // strip and the gate refusal can never describe different state.
+    const next_charters: HubCharterDebt[] = [];
+    for (const row of report?.charters || []) {
+      const scope = String((row as any)?.scope || "");
+      if (!scope) continue;
+      next_charters.push({
+        scope,
+        version: Number((row as any)?.version || 0),
+        your_receipt: typeof (row as any)?.your_receipt === "number" ? (row as any).your_receipt : null,
+        read_with: String((row as any)?.read_with || ""),
+        gated: Boolean((row as any)?.gated),
+        reason: String((row as any)?.reason || ""),
+      });
+    }
+    set_debt_map((cur) => (same_unread(cur, next) ? cur : next));
+    set_owed_asks((cur) => (JSON.stringify(cur) === JSON.stringify(next_asks) ? cur : next_asks));
+    set_close_map((cur) => (JSON.stringify(cur) === JSON.stringify(next_close) ? cur : next_close));
+    set_charter_debts((cur) => (JSON.stringify(cur) === JSON.stringify(next_charters) ? cur : next_charters));
+  }
+
+  /** Re-read `/owed` right now. The debt surface otherwise refreshes only on
+   *  the badge cadence (30s), which is why an act that discharges something
+   *  left its pill standing long enough to read as broken. This asks the
+   *  hub for its verdict instead of predicting it — the console has no way
+   *  to know whether a given closure was authoritative. */
+  async function refresh_owed(): Promise<void> {
+    try {
+      apply_owed(await hub.owed());
+    } catch {
+      // Older hub, or /owed refused. The badge cadence keeps its envelope
+      // fallback; a failed targeted refresh must never wipe what it has.
+    }
+  }
+
   async function refresh_badges_once(chans: HubChannel[]): Promise<void> {
     try {
       const inbox = await hub.inbox();
@@ -955,21 +1072,19 @@ export function TeamPage(props: {
       // fallback for hubs that do not serve /owed.
       void hub
         .owed()
-        .then((report) => {
-          const rows = report.to_answer || [];
-          const next: Record<string, Set<number>> = {};
-          for (const row of rows) {
-            const channel = String((row as any).channel || "");
-            const seq = Number((row as any).seq);
-            if (!channel || !Number.isFinite(seq)) continue;
-            (next[channel] ||= new Set()).add(seq);
-          }
-          set_debt_map((cur) => (same_unread(cur, next) ? cur : next));
-        })
+        .then(apply_owed)
         .catch(() => {
           // Older hub, or /owed refused: fall back to the envelope shape.
           const next_debts = debt_seqs_by_channel(inbox as any, meta_ref.current?.seat || "");
           set_debt_map((cur) => (same_unread(cur, next_debts) ? cur : next_debts));
+          // The envelope carries no per-ask subsets. Dropping them keeps the
+          // two maps from disagreeing — a stale subset from an earlier /owed
+          // read would otherwise outlive the verdict that produced it.
+          set_owed_asks((cur) => (Object.keys(cur).length ? {} : cur));
+          set_close_map((cur) => (Object.keys(cur).length ? {} : cur));
+          // Same rule for charter debts: only /owed states them, so a report
+          // that never arrived leaves the console with nothing to say.
+          set_charter_debts((cur) => (cur.length ? [] : cur));
         });
       const next_to_me = to_me_seqs_by_channel(inbox as any, meta_ref.current?.seat || "");
       set_to_me_map((cur) => (same_unread(cur, next_to_me) ? cur : next_to_me));
@@ -1038,7 +1153,13 @@ export function TeamPage(props: {
   async function refresh_channels(): Promise<void> {
     try {
       const [m, chans] = await Promise.all([hub.meta(), hub.channels()]);
-      set_meta({ seat: m.seat, seat_key_present: m.seat_key_present, operator: Boolean(m.operator) });
+      set_meta({
+        seat: m.seat,
+        seat_key_present: m.seat_key_present,
+        operator: Boolean(m.operator),
+        mission: String(m.mission || ""),
+        hub_charter: m.hub_charter || null,
+      });
       set_hub_url(String(m.hub_url || ""));
       void hub
         .healthz()
@@ -1081,7 +1202,7 @@ export function TeamPage(props: {
       // the dedicated banner instead of leaving meta null (which kept the
       // diagnostic unreachable on every path; adjudication A2).
       const status = Number(e?.status || 0);
-      if (status === 401 || status === 403) set_meta({ seat: "", seat_key_present: false, operator: false });
+      if (status === 401 || status === 403) set_meta({ seat: "", seat_key_present: false, operator: false, mission: "", hub_charter: null });
     }
   }
 
@@ -1732,7 +1853,7 @@ export function TeamPage(props: {
         .members(selected)
         .then((m) => {
           if (gen !== chan_gen.current) return;
-          set_members(m as Array<{ agent_id?: string; about?: string; role?: string }>);
+          set_members(m as Array<{ agent_id?: string; about?: string; mission?: string; role?: string }>);
           set_members_error("");
           consume_invited_pending(selected, m as Array<{ agent_id?: string }>);
         })
@@ -1863,13 +1984,31 @@ export function TeamPage(props: {
   // rating store must FAIL LOUDLY, never divert to a side store.
   const [reaction_busy, set_reaction_busy] = useState("");
 
-  /** Decline-on-the-record (operator dm 147a: "discard a question so it
-   *  stops showing"). The hub's designed discharge for an obligation you
-   *  will not answer is a DECLINE REPLY from the addressee ("Only engaging
-   *  clears: any reply of theirs (answer, decline on the record)"), citing
-   *  the pending ask ids so the clearing is mechanical, not prose. Never a
+  /** Decline-on-the-record. The hub's designed discharge for an obligation
+   *  you will not answer is a DECLINE REPLY from the addressee, citing the
+   *  pending ask ids so the clearing is mechanical, not prose. Never a
    *  client-side hide: the debt clears FOR EVERY VIEW because the hub
-   *  clears it. Two-step (arm, then post) with a 6s self-expiring arm. */
+   *  clears it. Two-step (arm, then post) with a 6s self-expiring arm.
+   *
+   *  `declines` (agora 0.17, backlog 0153) is what makes the refusal SAY so
+   *  on the wire — before it, an answer and a refusal were the same shape
+   *  and the digest credited a refuser as an answerer. The hub folds
+   *  `declines` into `answers` and keeps the refused subset.
+   *
+   *  Both fields are sent deliberately. `answers` alone is what every hub
+   *  since the ask model has understood, and an older hub IGNORES an
+   *  unknown `declines` — sending it alone would post a reply that
+   *  discharges NOTHING there, and no response distinguishes that from
+   *  success (a dropped field is not a 404 the way a missing route is), so
+   *  it cannot be feature-detected after the fact. Sending both is the
+   *  hub's own documented shape — `declines` is "always a subset of
+   *  `answers`" — so a 0.17 hub records the disposition and an older one
+   *  still discharges. Worth naming rather than glossing: on that older hub
+   *  the refusal is recorded as a plain ANSWER, so its digest credits the
+   *  refuser under `answered_by` and the asker is handed a consumption row
+   *  pointing at "Declined on the record…". Discharging while the record
+   *  says the opposite still beats not discharging at all, but it is the
+   *  hub upgrade — not this client — that makes the record true. */
   const [decline_arm, set_decline_arm] = useState("");
   useEffect(() => {
     if (!decline_arm) return;
@@ -1883,24 +2022,34 @@ export function TeamPage(props: {
     }
     set_decline_arm("");
     try {
-      const asks = Array.isArray(m.pending_asks) ? m.pending_asks.filter(Boolean) : [];
+      // The hub already computed WHICH asks are this seat's on this message
+      // (`/owed.to_answer[].asks_naming_you`). `pending_asks` is the global
+      // set: on a root canvassing several seats it carries asks addressed
+      // to others, and naming one of those is refused outright — the whole
+      // Decline fails, telling the operator they may not decline an ask
+      // they never meant to touch. Prefer the hub's subset; fall back to
+      // the global set only where no /owed row exists (a hub that does not
+      // serve it, where the console has nothing better).
+      // An empty subset from a served row is authoritative: no ask here is
+      // this seat's, so the discharge is a plain reply carrying no
+      // discharge field — which is exactly what clears a directive debt.
+      // Only a genuinely ABSENT row (a hub that serves no /owed) falls back
+      // to the message's global set.
+      const mine = owed_asks[m.channel]?.[m.seq];
+      const asks = mine ?? (Array.isArray(m.pending_asks) ? m.pending_asks.filter(Boolean) : []);
       const posted = await hub.post_message(m.channel, {
         body: `Declined on the record by ${meta?.seat || "operator"} — closing without a substantive answer.`,
         status: "reply",
         reply_to: m.id,
         to: m.sender ? [m.sender] : undefined,
-        ...(asks.length ? { answers: asks } : {}),
+        ...(asks.length ? { answers: asks, declines: asks } : {}),
       });
       remember_rest_cursor(m.channel, Number(posted?.seq || 0));
-      // The hub recomputes discharge on the next inbox poll; drop the pill
-      // immediately for feedback (the poll confirms).
-      set_debt_map((cur) => {
-        const s = cur[m.channel];
-        if (!s?.has(m.seq)) return cur;
-        const next = new Set(s);
-        next.delete(m.seq);
-        return { ...cur, [m.channel]: next };
-      });
+      // Ask the hub for its recomputed verdict now rather than waiting out
+      // the 30s badge cadence. Not an optimistic drop: a decline the hub
+      // refuses (an ask that is not this seat's, a parent carrying none)
+      // must leave the pill exactly where it is.
+      await refresh_owed();
     } catch (e: any) {
       set_error(String(e?.message || e || "decline failed"));
     }
@@ -2238,7 +2387,7 @@ export function TeamPage(props: {
       .then((m) => {
         if (gen !== chan_gen.current) return;
         member_note_seq.current = latest;
-        set_members(m as Array<{ agent_id?: string; about?: string; role?: string }>);
+        set_members(m as Array<{ agent_id?: string; about?: string; mission?: string; role?: string }>);
         set_members_error("");
         consume_invited_pending(selected, m as Array<{ agent_id?: string }>);
       })
@@ -2330,6 +2479,67 @@ export function TeamPage(props: {
     }
   }
 
+  /** Read a charter this seat is behind on, at either scope — and let the
+   *  READ be what clears it. The hub records a receipt when the head is
+   *  read (`GET /charter` at hub scope, the channel-fs read of
+   *  `channel/charter.md` at room scope); the console never marks one read
+   *  locally, because a receipt it invented would be a forged one and the
+   *  posting gate keys on the real thing.
+   *
+   *  The hub charter is served as THIS seat's view — the common sections
+   *  plus the ones addressed to the kinds of seat it is. That is the hub's
+   *  token economy, not an access boundary, so when the served text is a
+   *  slice the viewer says which sections were left out and offers the whole
+   *  document, exactly as the response's own `read_all_with` instructs. */
+  async function open_charter(scope: string, full = false): Promise<void> {
+    if (scope && scope !== HUB_CHARTER_SCOPE) {
+      await open_fs_path(CHANNEL_CHARTER_PATH, scope);
+      await refresh_owed();
+      return;
+    }
+    const name = "hub charter";
+    set_file_view({ name, mode: "md", loading: true });
+    try {
+      const doc = await hub.charter(full);
+      const omitted = Array.isArray(doc.omitted) ? doc.omitted.filter(Boolean) : [];
+      const view = Array.isArray(doc.view) ? doc.view.join("+") : "";
+      const meta = [
+        `v${doc.version ?? "?"}`,
+        doc.packaged ? "packaged default" : doc.updated_by ? `set by ${doc.updated_by}` : "",
+        view ? `your view: ${view}` : "",
+        doc.sliced ? `${omitted.length} section(s) not addressed to this seat` : "whole document",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      // The slice, and the way out of it, stated in the document itself —
+      // a reader must never have to wonder whether they were shown all of
+      // it. `read_all_with` is the hub's own wording for the full read.
+      const note = doc.sliced
+        ? `> Served as your view (${view || "member"}). Not shown: ${omitted.join(", ") || "—"}.` +
+          `${doc.view_note ? ` ${doc.view_note}` : ""}\n> The whole document is available — ${doc.read_all_with || "GET /charter?full=true"}.\n\n`
+        : "";
+      const brief = doc.delegate_brief ? `\n\n---\n\n${doc.delegate_brief}` : "";
+      set_file_view({ name, mode: "md", text: clamp_preview(`${note}${doc.text || ""}${brief}`), meta, loading: false });
+      // The read just recorded a receipt; ask the hub whether the debt is
+      // gone rather than assuming it (a sliced read clears `current` but
+      // not necessarily `view_current`).
+      await refresh_owed();
+      // The whoami pointer is the other half of the same statement; a stale
+      // `current: false` beside a cleared debt row would be the console
+      // contradicting itself.
+      void hub.meta().then(set_meta).catch(() => {});
+    } catch (e: any) {
+      const msg = String(e?.message || e || "failed to read the hub charter");
+      set_file_view({
+        name,
+        mode: "md",
+        error: /404|not found/i.test(msg)
+          ? `${msg} — this hub predates the hub charter (agora 0146); there is nothing to read.`
+          : msg,
+      });
+    }
+  }
+
   /** Open a message attachment in the shared viewer (operator dm 35: click
    *  to PREVIEW, not just download). Every byte comes from the authenticated
    *  Hub client, then receives a short-lived object URL for presentation.
@@ -2391,7 +2601,7 @@ export function TeamPage(props: {
       // — the stale-bleed class the switch reset exists to prevent.
       const gen = chan_gen.current;
       const m = await hub.members(selected).catch(() => null);
-      if (m && gen === chan_gen.current) set_members(m as Array<{ agent_id?: string; about?: string; role?: string }>);
+      if (m && gen === chan_gen.current) set_members(m as Array<{ agent_id?: string; about?: string; mission?: string; role?: string }>);
       const b = await hub.list_blocks().catch(() => null);
       if (b && gen === chan_gen.current) set_blocked(b);
     } catch (e: any) {
@@ -2415,7 +2625,7 @@ export function TeamPage(props: {
       setTimeout(() => set_notice(""), 3500);
       const gen = chan_gen.current; // P1-6: no stale-channel bleed
       const m = await hub.members(selected).catch(() => null);
-      if (m && gen === chan_gen.current) set_members(m as Array<{ agent_id?: string; about?: string; role?: string }>);
+      if (m && gen === chan_gen.current) set_members(m as Array<{ agent_id?: string; about?: string; mission?: string; role?: string }>);
       const r = await hub.retired_agents().catch(() => null);
       if (r && gen === chan_gen.current) set_retired(r);
     } catch (e: any) {
@@ -2734,6 +2944,29 @@ export function TeamPage(props: {
     set_error("");
     try {
       const resolve_to = dm_peer_of(selected, seat);
+      // Resolve carries NO discharge field, and that is the hub's own
+      // prescription, not an omission. A closure is neither an answer nor a
+      // refusal. `status=resolved` MAY carry `answers` since 0152 (a
+      // completion report that is itself the answer) — what refuses this
+      // particular shape is the pair of rules below: a
+      // reply may never discharge the asks of a parent YOU wrote ("your
+      // reply can never discharge your own asks — to close your own thread
+      // post status=resolved with reply_to it"), and it may not name an ask
+      // whose per-ask `to` is another seat — with no operator exemption on
+      // that path. Sending `answers` here 400s the single most common
+      // Resolve in the product (an asker closing their own open question,
+      // which by definition still has pending asks) and, where it lands,
+      // credits the resolver under the digest's `answered_by` and hands the
+      // asker a to_consume row pointing at the word "Resolved." — the exact
+      // inversion 0153 exists to prevent, through the other door.
+      //
+      // A resolve that leaves `/owed.to_answer` standing is therefore
+      // CORRECT unless the hub judges the closure authoritative. If a seat
+      // owes an ask, the discharge is to answer it or Decline it; closing
+      // the topic is a different act. Whether a non-authoritative resolve
+      // should also clear the asker's own row is a hub question, not one
+      // this console may answer by asserting a substance claim it knows to
+      // be false.
       const posted = await hub.post_message(selected, {
         body: "Resolved.",
         status: "resolved",
@@ -2744,6 +2977,14 @@ export function TeamPage(props: {
       remember_rest_cursor(selected, Number(posted?.seq || 0));
       set_resolve_nudge("");
       set_resolve_hub_data("");
+      // `debt_map` is the hub's /owed verdict and only re-reads on the BADGE
+      // cadence (POLL_MS * BADGE_POLL_EVERY = 30s) — refresh_messages never
+      // touches it, so the pill sat stale for up to 30s after a closure.
+      // ASK the hub again rather than dropping the pill optimistically: a
+      // resolve is authoritative only from the asker or an operator, so
+      // guessing "the debt is gone" is a coin flip the console would lose
+      // silently — and it would have no way to put the pill back.
+      void refresh_owed();
       set_notice(`Marked #${m.seq} resolved.`);
       setTimeout(() => set_notice(""), 3000);
       await refresh_messages(selected, { background: true });
@@ -3283,7 +3524,15 @@ export function TeamPage(props: {
       save_drafts(drafts.current); // the sent draft must not resurrect on reload
       setTimeout(() => set_notice(""), 3000);
     } catch (e: any) {
-      set_error(String(e?.message || e || "Post failed"));
+      const msg = String(e?.message || e || "Post failed");
+      set_error(msg);
+      // The charter gate (409, `channel:meta.norms_required`) refuses the
+      // post until this seat has read the room's current charter. The
+      // refusal names the MCP call that clears it, which is not a thing a
+      // console user can type — so re-read /owed, whose charter row IS the
+      // console's version of that instruction: a chip that opens the
+      // charter and records the receipt.
+      if (/requires reading its charter/i.test(msg)) void refresh_owed();
     } finally {
       set_posting(false);
     }
@@ -3730,17 +3979,52 @@ export function TeamPage(props: {
             <div className="team_info_charter">
               <button
                 className="team_row_expand"
-                onClick={() => void open_fs_path(path)}
-                title={`Open ${path} from this channel's virtual file system (vfs)`}
+                onClick={() => {
+                  // Reading the HEAD is what records this seat's receipt —
+                  // so the read can clear a gate, and /owed is re-read to
+                  // find out whether the hub agrees that it did.
+                  void open_fs_path(path).then(() => refresh_owed());
+                }}
+                title={`Open ${path} from this channel's virtual file system (vfs) — reading the current version records your charter receipt`}
               >
                 Read charter{typeof desc.version === "number" ? ` (v${desc.version})` : ""}
               </button>
               {typeof desc.updated_by === "string" && desc.updated_by ? (
                 <span className="muted team_note"> — updated by {desc.updated_by}</span>
               ) : null}
+              {info.meta?.norms_required ? (
+                <div className="muted team_note" title="channel:meta.norms_required — the hub refuses a post from any seat whose charter receipt is older than the current version. It forces attention to the rules, never agreement with them.">
+                  norms_required — posting here is gated on having read the current version.
+                </div>
+              ) : null}
             </div>
           );
         })()}
+        {/* Declared phase order (hub 0140/2). Advisory by construction: the
+            hub cannot know what a message works on, so the whole power of a
+            phase is being visible before you post. Served on /info; absent
+            on older hubs, where this block simply does not render. */}
+        {(info.phases || []).length ? (
+          <div className="team_info_phases">
+            <div className="muted team_note" style={{ marginBottom: 4 }}>
+              Phases
+            </div>
+            {(info.phases || []).map((p: HubPhaseRow) => (
+              <div key={String(p.key || p.track)} className="team_info_phase_row">
+                <AfChip tone={String(p.status || "open") === "open" ? "warning" : "muted"} size="sm">
+                  {String(p.track || "work")} · {String(p.current || "?")}
+                </AfChip>
+                <span className="muted team_note">
+                  {String(p.status || "open") === "open" ? "in force" : "complete"}
+                  {p.next ? ` · next: ${p.next}` : ""}
+                  {p.steward ? ` · steward: ${p.steward}` : ""}
+                  {p.declared_by ? ` · declared by ${p.declared_by}` : ""}
+                </span>
+                {p.note ? <div className="muted team_note">{String(p.note)}</div> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
         {/* Members + moderation (operator c2240): the HUB is the authority —
             refusals render verbatim. Moderation and lifecycle hide in dm
             channels (owner-less by hub construction — every act refuses). */}
@@ -3814,7 +4098,13 @@ export function TeamPage(props: {
             members.map((m) => {
               const id = String(m.agent_id || "");
               if (!id) return null;
-              const mission = missions_map?.[id] || "";
+              // The member row already carries the operator's charge for
+              // that seat (`/channels/{c}/info.members[].mission`, hub
+              // 0.17.1) — served to every member, no operator key needed.
+              // `/admin/missions` stays the operator's editing source and
+              // wins when it has loaded, so a just-saved mission shows
+              // immediately instead of waiting for the roster to refetch.
+              const mission = missions_map?.[id] ?? String(m.mission || "");
               return (
                 <React.Fragment key={id}>
                 <div className="team_member_row">
@@ -4246,6 +4536,39 @@ export function TeamPage(props: {
         </AfChip>
       );
     }
+    // ASKER SIDE (agora 0153). Your own thread is fully discharged — every
+    // ask answered OR REFUSED — and every surface that reports discharge
+    // says the same word for both. This is the one place the difference
+    // reaches the person who asked: a thread nobody answered is one to
+    // repost or rethink, not one to close quietly. Hub-served
+    // (`/owed.to_close`); absent on older hubs, and the chip simply does
+    // not appear.
+    const closing = close_map[m.channel]?.[m.seq];
+    if (is_root && closing?.declined_asks.length) {
+      const who = closing.declined_by.join(", ") || "another seat";
+      const n = closing.declined_asks.length;
+      // NOT `!answered_by` — the hub sets that to the last non-sender
+      // replier whether they answered or refused, so on a fully-declined
+      // thread it names a decliner. "Nobody answered" is only true when the
+      // refused ids cover every ask the message carries; both numbers are
+      // hub-served and both are on this row.
+      const nothing_answered = n >= (m.data?.asks || []).length;
+      chips.push(
+        <AfChip
+          key="refused"
+          tone="warning"
+          size="sm"
+          title={
+            `${nothing_answered ? "Nobody answered this." : "Partly answered."} ` +
+            `${who} DECLINED ask(s) ${closing.declined_asks.join(", ")} — refused on the record, not answered. ` +
+            "The thread is fully discharged and stopped escalating, which is why it no longer asks for anything. " +
+            "Repost or rethink it rather than closing it quietly."
+          }
+        >
+          ✗ {nothing_answered ? `${n} refused, none answered` : `${n} refused`}
+        </AfChip>
+      );
+    }
     if (m.critical) {
       chips.push(
         <AfChip key="crit" tone="error" size="sm" title="Critical: unpins only on explicit read — click the row to record the read">
@@ -4257,13 +4580,30 @@ export function TeamPage(props: {
     // list rows, folds into the `answered` state above — one chip, not two.)
     // A reply that DISCHARGES asks names them (the closure was visually
     // anonymous — adversary find).
-    const answers = m.data?.answers || [];
-    if (status === "reply" && answers.length) {
-      chips.push(
-        <AfChip key="dis" tone="success" size="sm" title={`This reply discharges ask(s) ${answers.join(", ")} of its parent.`}>
-          ✓ answers {answers.join(",")}
-        </AfChip>
-      );
+    // `answers` is the ids this reply DISCHARGED — refusals included, because
+    // the hub folds `declines` into it (agora 0153). Rendering it whole would
+    // caption a refusal "✓ answers", the exact inversion the disposition was
+    // added to prevent, so subtract as the protocol instructs and chip the two
+    // outcomes apart. Older hubs serve no `declines`; the subtraction is then
+    // a no-op and this reads exactly as before.
+    const discharged = m.data?.answers || [];
+    const declined = m.data?.declines || [];
+    const answered_ids = discharged.filter((id) => !declined.includes(id));
+    if (status === "reply" || status === "resolved") {
+      if (answered_ids.length) {
+        chips.push(
+          <AfChip key="dis" tone="success" size="sm" title={`This reply answers ask(s) ${answered_ids.join(", ")} of its parent.`}>
+            ✓ answers {answered_ids.join(",")}
+          </AfChip>
+        );
+      }
+      if (declined.length) {
+        chips.push(
+          <AfChip key="decl" tone="warning" size="sm" title={`This reply DECLINES ask(s) ${declined.join(", ")} of its parent — refused on the record, not answered. It discharges the obligation either way; the body is the why.`}>
+            ✗ declines {declined.join(",")}
+          </AfChip>
+        );
+      }
     }
     // Cap the @to flood: multi-seat posts routinely address 5+ seats and
     // drowned the head line (adversary find).
@@ -4381,27 +4721,12 @@ export function TeamPage(props: {
                 repeated the same signal; sticky Hub debt remains labeled
                 because reading it does not resolve the obligation. */}
             {debt_map[m.channel]?.has(m.seq) ? (
-              <>
-                <span
-                  className="team_chip_debt"
-                  title="Pinned by the hub until answered: this is an open ask or a directive addressed to you — reading is not answering; reply, Decline, or Resolve the thread to clear it"
-                >
-                  needs reply
-                </span>
-                {/* Discard = decline on the record (operator dm 147a): posts
-                    a reply citing the pending ask ids so the hub clears the
-                    obligation for every view — never a local hide. */}
-                <button
-                  className={`team_chip_decline ${decline_arm === m.id ? "armed" : ""}`}
-                  title={decline_arm === m.id ? "Click again to decline on the record (posts a closing reply)" : "Decline: close this ask without answering — posts an on-the-record reply so it stops showing everywhere"}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void decline_debt(m);
-                  }}
-                >
-                  {decline_arm === m.id ? "sure? declines on the record" : "decline"}
-                </button>
-              </>
+              <span
+                className="team_chip_debt"
+                title="Pinned by the hub until answered: this is an open ask or a directive addressed to you — reading is not answering; reply, Decline, or Resolve the thread to clear it"
+              >
+                needs reply
+              </span>
             ) : null}
             {/* Authorship renders from the WIRE (sender on the envelope),
                 never client state — uic c1706. */}
@@ -4595,6 +4920,12 @@ export function TeamPage(props: {
           })()}
           {asks.length ? (
             <div className="team_row_asks">
+              {/* No declined/answered mark on an ask here: the history row
+                  (`MessageRow`) carries `pending_asks` and nothing about
+                  DISPOSITION — `declined_asks` exists on the envelope and
+                  the to_close row, neither of which feeds this list. The
+                  refusal is still visible where the hub does serve it: on
+                  the declining reply, which chips "✗ declines". */}
               {asks.map((a) => (
                 <span key={a.id} className="team_ask" title={a.text}>
                   ask {a.id}: {a.text.length > 90 ? a.text.slice(0, 90) + "…" : a.text}
@@ -4740,6 +5071,30 @@ export function TeamPage(props: {
                 ⌫ Retract thread
               </button>
             ) : null}
+            {/* Decline-on-the-record (operator dm 147a), beside Resolve
+                because both verbs CLOSE something and the choice between
+                them is only makeable side by side: Decline discharges YOUR
+                obligation on THIS message (posts a reply citing its ask
+                ids, so the hub clears it for every view — never a local
+                hide); Resolve closes the whole topic. The `needs reply`
+                badge stays in the header — that is state, not an action.
+                Two-step; the arm self-expires after 6s. */}
+            {debt_map[m.channel]?.has(m.seq) ? (
+              <button
+                className={`btn btn_icon ${decline_arm === m.id ? "team_danger" : ""}`}
+                title={
+                  decline_arm === m.id
+                    ? "Click again to decline on the record — posts a reply citing this message's asks so the hub clears the obligation everywhere"
+                    : "Decline: close this ask without answering — posts an on-the-record reply so it stops showing everywhere"
+                }
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void decline_debt(m);
+                }}
+              >
+                {decline_arm === m.id ? "⊘ confirm decline" : "⊘ Decline"}
+              </button>
+            ) : null}
             {/* Resolve (operator dm 21): declare the topic closed. Only on
                 roots that actually opened something (open/blocked) — a
                 resolved post closes the thread on the hub. Two-step. */}
@@ -4866,6 +5221,17 @@ export function TeamPage(props: {
   const chan_owner = (members || []).find((m) => String(m.role || "") === "owner")?.agent_id || "";
   const seat_is_owner = Boolean(seat) && chan_owner === seat;
 
+  // Charter debts, split the way a reader acts on them (hub 0146/2): the
+  // standing role model, the room you are looking at, the rooms where the
+  // hub is already refusing your posts, and — folded to one quiet count —
+  // the rooms that are merely behind. Every row is one read away from
+  // gone, so each visible one is clickable and nothing here nags twice.
+  const charter_hub_debt = charter_debts.find((d) => d.scope === HUB_CHARTER_SCOPE) || null;
+  const charter_room_debts = charter_debts.filter((d) => d.scope !== HUB_CHARTER_SCOPE);
+  const charter_here = charter_room_debts.find((d) => d.scope === selected) || null;
+  const charter_gated_elsewhere = charter_room_debts.filter((d) => d.gated && d.scope !== selected);
+  const charter_quiet_elsewhere = charter_room_debts.filter((d) => !d.gated && d.scope !== selected);
+
   return (
     <div
       className="page page_pad team_page"
@@ -4899,11 +5265,69 @@ export function TeamPage(props: {
       {/* Status strip renders ONLY when something needs saying — the
           permanent toolbar row was chrome tax (design critic: 5 bars
           before the first message). */}
-      {(health?.protocol && health.protocol !== PINNED_PROTOCOL) || health?.paused || error || vote_error || notice || (meta && !meta.seat_key_present) ? (
+      {(health?.protocol && health.protocol !== PINNED_PROTOCOL) || health?.paused || error || vote_error || notice || charter_debts.length || (meta && !meta.seat_key_present) ? (
         <div className="team_statusstrip">
           {meta && !meta.seat_key_present ? (
             <span className="chip mono warn" title="The Hub session is read-only.">
               read-only (no seat key)
+            </span>
+          ) : null}
+          {/* CHARTER DEBTS (`/owed.charters`). The hub states them; reading
+              clears them, because the read IS the receipt. A gated room is
+              the only one of these that blocks anything — the hub is
+              already refusing posts there — so it wears the warning and
+              the rest stay quiet. */}
+          {charter_hub_debt ? (
+            <button
+              className="chip mono team_charter_chip"
+              onClick={() => void open_charter(HUB_CHARTER_SCOPE)}
+              title={
+                `The hub charter is at v${charter_hub_debt.version} and ` +
+                (charter_hub_debt.your_receipt === null
+                  ? "you have never read it"
+                  : `your receipt is for v${charter_hub_debt.your_receipt}`) +
+                (charter_hub_debt.reason === "view"
+                  ? " — your seat changed since you read it, so the text you were served never contained the sections now addressed to you"
+                  : "") +
+                ". It is the standing role model (who is who): who may retract what, what a delegate owes, what an operator's word settles. Reading it blocks nothing and records your receipt."
+              }
+            >
+              hub charter v{charter_hub_debt.version} unread
+            </button>
+          ) : null}
+          {charter_here ? (
+            <button
+              className={`chip mono team_charter_chip ${charter_here.gated ? "warn" : ""}`}
+              onClick={() => void open_charter(charter_here.scope)}
+              title={
+                `#${charter_here.scope}'s charter is at v${charter_here.version} and ` +
+                (charter_here.your_receipt === null ? "you have not read it" : `your receipt is for v${charter_here.your_receipt}`) +
+                (charter_here.gated
+                  ? ". This room sets norms_required: the hub REFUSES your posts here until you read it (409). Opening it is the whole fix — one read, one call."
+                  : ". Reading it records your receipt; nothing here is blocked.")
+              }
+            >
+              {charter_here.gated ? `#${charter_here.scope} charter unread — posting gated` : `#${charter_here.scope} charter v${charter_here.version} unread`}
+            </button>
+          ) : null}
+          {charter_gated_elsewhere.map((d) => (
+            <button
+              key={`charter_gated_${d.scope}`}
+              className="chip mono warn team_charter_chip"
+              onClick={() => void open_charter(d.scope)}
+              title={`#${d.scope} sets norms_required and the hub is refusing your posts there until you read its charter (v${d.version}).`}
+            >
+              #{d.scope} posting gated
+            </button>
+          ))}
+          {charter_quiet_elsewhere.length ? (
+            <span
+              className="chip mono muted"
+              title={`Rooms whose charter changed since you last read it: ${charter_quiet_elsewhere
+                .map((d) => `#${d.scope} (v${d.version})`)
+                .join(", ")}. Nothing is blocked — open a room to read its charter there.`}
+            >
+              {charter_quiet_elsewhere.length} other charter{charter_quiet_elsewhere.length === 1 ? "" : "s"} behind
             </span>
           ) : null}
           {health?.protocol && health.protocol !== PINNED_PROTOCOL ? (
@@ -5331,7 +5755,20 @@ export function TeamPage(props: {
               {" · "}
               {visible_threads.length !== threads.length ? `${visible_threads.length} of ${threads.length} threads` : threads.length ? `${threads.length} threads` : ""}
               {meta?.seat_key_present ? (
-                <span title="Posts are authored under this hub seat — your own identity, key held server-side."> · as {meta.seat}</span>
+                // The seat's MISSION rides `/whoami` (hub 0.17.1): the
+                // operator's standing charge for this seat, which no seat
+                // can author or soften for itself. It belongs beside the
+                // identity it qualifies, not in a drawer.
+                <span
+                  title={
+                    "Posts are authored under this hub seat — your own identity, key held server-side." +
+                    (meta.mission ? `\n\nStanding mission (set by the operator): ${meta.mission}` : "")
+                  }
+                >
+                  {" "}
+                  · as {meta.seat}
+                  {meta.mission ? <span className="team_seat_mission"> · mission set</span> : null}
+                </span>
               ) : null}
             </span>
           </div>

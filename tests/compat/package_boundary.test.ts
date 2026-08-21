@@ -29,4 +29,15 @@ describe("package boundary", () => {
     expect(existsSync(join(ROOT, "examples", "mock_standalone_server.py"))).toBe(false);
     expect(existsSync(join(ROOT, "examples", "standalone_proxy_server.py"))).toBe(false);
   });
+
+  it("identifies itself to the hub at the version it actually is", () => {
+    // `X-Agora-Client` is the hub's version handshake: a client that does
+    // not send it is served a synthetic "your tooling is stale" notice, and
+    // one that sends a stale VERSION tells the hub something false about
+    // which fields it can render. It drifted a release behind once already;
+    // this makes the drift fail here instead of on the wire.
+    const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+    const client = readFileSync(join(ROOT, "src", "lib", "hub_client.ts"), "utf8");
+    expect(client).toContain(`AGORA_WUI_CLIENT_HEADER = "agora-wui/${manifest.version}"`);
+  });
 });

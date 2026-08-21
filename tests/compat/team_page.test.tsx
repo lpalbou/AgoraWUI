@@ -45,13 +45,31 @@ type StubOpts = {
   retired?: any[];
   owed?: any;
   search?: any;
+  /** `/whoami` — identity plus the hub's own answers about this seat:
+   *  `mission` (the operator's standing charge) and the `hub_charter`
+   *  pointer. Default keeps the pre-0.17 shape so every existing pin still
+   *  describes a hub that serves neither. */
+  whoami?: any;
+  /** `GET /charter` — the hub charter in this seat's view. Reading it is
+   *  what records the receipt, so a test asserting the read is asserting
+   *  the debt-clearing act itself. */
+  charter?: any;
+  /** Status + body for POST /channels/{c}/messages, so the charter gate's
+   *  409 refusal can be exercised. */
+  post_refusal?: { status: number; detail: string };
 };
 
 function stub_hub(opts: StubOpts = {}): ReturnType<typeof vi.fn> {
   const fetch_mock = vi.fn(async (input: any, init?: any) => {
     const url = String(typeof input === "string" ? input : input?.url || "");
     if (url.includes("/whoami")) {
-      return new Response(JSON.stringify({ id: "laurent" }), { status: 200 });
+      return new Response(JSON.stringify(opts.whoami ?? { id: "laurent" }), { status: 200 });
+    }
+    // HUB-scope charter only (`/charter`, `/charter?full=true`) — a room's
+    // charter is a channel-fs read and must fall through to that branch.
+    if (/\/charter(\?|$)/.test(url)) {
+      if (!opts.charter) return new Response(JSON.stringify({ detail: "Not Found" }), { status: 404 });
+      return new Response(JSON.stringify(opts.charter), { status: 200 });
     }
     if (url.includes("/healthz")) {
       return new Response(JSON.stringify({ ok: true, version: "0.14.0", protocol: opts.protocol ?? "agora/0.4", paused: opts.paused ?? false }), { status: 200 });
@@ -94,6 +112,9 @@ function stub_hub(opts: StubOpts = {}): ReturnType<typeof vi.fn> {
     }
     if (url.includes("/channels") && url.includes("/messages") && String(init?.method || "GET") === "GET") {
       return new Response(JSON.stringify(opts.messages ?? []), { status: 200 });
+    }
+    if (opts.post_refusal && url.includes("/channels") && url.endsWith("/messages") && String(init?.method || "GET") === "POST") {
+      return new Response(JSON.stringify({ detail: opts.post_refusal.detail }), { status: opts.post_refusal.status });
     }
     if (url.includes("/channels") && url.endsWith("/leave") && String(init?.method || "GET") === "POST") {
       return new Response(JSON.stringify({ left: true }), { status: 200 });
@@ -685,6 +706,248 @@ describe("TeamPage moderation (operator dm 12: remove from a channel OR the hub)
     expect(body.data).toEqual({ evidence: [{ kind: "store", ref: "plan:wui-audit" }] });
   });
 
+  it("Resolve posts no discharge field and re-reads /owed instead of waiting out the badge cadence", async () => {
+    // Closing the topic used to leave `/owed.to_answer` untouched: the row
+    // chipped "answered" while still wearing "needs reply", because the
+    // resolved reply named no ask ids and `debt_map` only re-reads on the
+    // badge cadence (30s). Both halves are asserted here.
+    const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, data: null, reply_to: null };
+    const fetch_mock = stub_hub({
+      messages: [
+        { ...base, id: "m1", seq: 5, sender: "core", status: "open", title: "an open question", body: "please decide", to: ["laurent"], pending_asks: ["1"] },
+      ],
+      owed: { to_answer: [{ channel: "commons", seq: 5 }], to_consume: [], waiting_on: [], counts: { to_answer: 1, to_consume: 0 } },
+    });
+    render_page();
+    await screen.findByText("an open question");
+    await screen.findByText("needs reply");
+    const owed_calls = () => fetch_mock.mock.calls.filter((c) => String(c[0]).includes("/owed"));
+    const before_owed = owed_calls().length;
+    const resolve_calls = () =>
+      fetch_mock.mock.calls.filter((c) => {
+        if (!String(c[0]).includes("/messages") || String(c[1]?.method || "GET") !== "POST") return false;
+        try {
+          return JSON.parse(String(c[1]?.body || "{}")).status === "resolved";
+        } catch {
+          return false;
+        }
+      });
+    fireEvent.click(screen.getByRole("button", { name: "✓ Resolve" }));
+    fireEvent.click(await screen.findByRole("button", { name: "✓ confirm resolve" }));
+    await waitFor(() => expect(resolve_calls().length).toBe(1));
+    const body = JSON.parse(String(resolve_calls()[0]?.[1]?.body || "{}"));
+    expect(body.status).toBe("resolved");
+    // A closure carries NO discharge field. `_validate_answers` refuses a
+    // reply that discharges the asks of a parent you wrote — which is the
+    // most common Resolve there is — and refuses an ask addressed to
+    // another seat, with no operator exemption. Resolving is not answering.
+    expect(body.answers).toBeUndefined();
+    expect(body.declines).toBeUndefined();
+    // The pill is the HUB's verdict, so the console re-reads /owed instead
+    // of dropping it: a resolve is authoritative only from the asker or an
+    // operator, and guessing wrong leaves no way to put the pill back.
+    await waitFor(() => expect(owed_calls().length).toBeGreaterThan(before_owed));
+  });
+
+  it("Decline is a two-step confirm posting a reply that declines the pending asks", async () => {
+    // Both closure verbs live on ONE surface (operator ask 2026-08-20):
+    // Decline discharges the obligation on this message, Resolve closes
+    // the topic. The `needs reply` BADGE stays in the header — state, not
+    // an action.
+    const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, data: null, reply_to: null };
+    const fetch_mock = stub_hub({
+      messages: [
+        { ...base, id: "m1", seq: 5, sender: "core", status: "open", title: "an open question", body: "please decide", to: ["laurent"], pending_asks: ["1", "2"] },
+      ],
+      owed: { to_answer: [{ channel: "commons", seq: 5 }], to_consume: [], waiting_on: [], counts: { to_answer: 1, to_consume: 0 } },
+    });
+    render_page();
+    await screen.findByText("an open question");
+    const decline_calls = () =>
+      fetch_mock.mock.calls.filter((c) => {
+        if (!String(c[0]).includes("/messages") || String(c[1]?.method || "GET") !== "POST") return false;
+        try {
+          return Array.isArray(JSON.parse(String(c[1]?.body || "{}")).answers);
+        } catch {
+          return false;
+        }
+      });
+    // Two-step, same idiom as Retract/Resolve next to it.
+    fireEvent.click(screen.getByRole("button", { name: "⊘ Decline" }));
+    expect(decline_calls().length).toBe(0);
+    fireEvent.click(await screen.findByRole("button", { name: "⊘ confirm decline" }));
+    await waitFor(() => expect(decline_calls().length).toBe(1));
+    const body = JSON.parse(String(decline_calls()[0]?.[1]?.body || "{}"));
+    expect(body.status).toBe("reply");
+    expect(body.reply_to).toBe("m1");
+    expect(body.answers).toEqual(["1", "2"]);
+  });
+
+  it("Decline names only the asks the hub says are THIS seat's, not the message's whole pending set", async () => {
+    // A root canvassing two seats carries both asks in `pending_asks`. The
+    // hub refuses a discharge naming an ask addressed to someone else ("you
+    // may not discharge ask ids not addressed to you") and the WHOLE
+    // Decline fails with it — so re-deriving the list from the message is
+    // not a cosmetic shortcut, it breaks the action. `/owed` already serves
+    // the per-seat subset as `asks_naming_you`; use it.
+    const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, reply_to: null };
+    const fetch_mock = stub_hub({
+      messages: [
+        {
+          ...base, id: "m1", seq: 5, sender: "core", status: "open", title: "canvass", body: "two seats",
+          to: ["laurent", "continuum"], pending_asks: ["1", "2"],
+          data: { asks: [{ id: "1", text: "for laurent", to: ["laurent"] }, { id: "2", text: "for continuum", to: ["continuum"] }] },
+        },
+      ],
+      owed: {
+        to_answer: [{ channel: "commons", id: "m1", seq: 5, sender: "core", asks_naming_you: ["1"], pending_asks: ["1", "2"] }],
+        to_consume: [], waiting_on: [], counts: { to_answer: 1, to_consume: 0 },
+      },
+    });
+    render_page();
+    await screen.findByText("canvass");
+    const decline_calls = () =>
+      fetch_mock.mock.calls.filter((c) => {
+        if (!String(c[0]).includes("/messages") || String(c[1]?.method || "GET") !== "POST") return false;
+        try {
+          return Array.isArray(JSON.parse(String(c[1]?.body || "{}")).declines);
+        } catch {
+          return false;
+        }
+      });
+    fireEvent.click(await screen.findByRole("button", { name: "⊘ Decline" }));
+    fireEvent.click(await screen.findByRole("button", { name: "⊘ confirm decline" }));
+    await waitFor(() => expect(decline_calls().length).toBe(1));
+    const body = JSON.parse(String(decline_calls()[0]?.[1]?.body || "{}"));
+    // Ask 2 is continuum's. Naming it would take the whole Decline down.
+    expect(body.declines).toEqual(["1"]);
+    expect(body.answers).toEqual(["1"]);
+  });
+
+  it("Decline sends NO discharge field when the hub says no ask here is this seat's", async () => {
+    // The hub keeps a to_answer row whenever the seat is in `to`, even when
+    // every per-ask `to` names someone else — `asks_naming_you` is then an
+    // explicit []. Naming the other seat's ids would 400 and take the whole
+    // Decline with it; a plain reply is what clears a directive debt.
+    const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, reply_to: null };
+    const fetch_mock = stub_hub({
+      messages: [
+        {
+          ...base, id: "m1", seq: 5, sender: "core", status: "open", title: "not for me", body: "q",
+          to: ["laurent", "continuum"], pending_asks: ["1", "2"],
+          data: { asks: [{ id: "1", text: "for continuum", to: ["continuum"] }, { id: "2", text: "also continuum", to: ["continuum"] }] },
+        },
+      ],
+      owed: {
+        to_answer: [{ channel: "commons", id: "m1", seq: 5, sender: "core", asks_naming_you: [], pending_asks: ["1", "2"] }],
+        to_consume: [], waiting_on: [], counts: { to_answer: 1, to_consume: 0 },
+      },
+    });
+    render_page();
+    await screen.findByText("not for me");
+    const replies = () =>
+      fetch_mock.mock.calls.filter((c) => {
+        if (!String(c[0]).includes("/messages") || String(c[1]?.method || "GET") !== "POST") return false;
+        try {
+          return JSON.parse(String(c[1]?.body || "{}")).status === "reply";
+        } catch {
+          return false;
+        }
+      });
+    fireEvent.click(await screen.findByRole("button", { name: "⊘ Decline" }));
+    fireEvent.click(await screen.findByRole("button", { name: "⊘ confirm decline" }));
+    await waitFor(() => expect(replies().length).toBe(1));
+    const body = JSON.parse(String(replies()[0]?.[1]?.body || "{}"));
+    expect(body.answers).toBeUndefined();
+    expect(body.declines).toBeUndefined();
+    expect(body.reply_to).toBe("m1");
+  });
+
+  it("the ASKER's own fully-refused thread says so, instead of reading as settled", async () => {
+    // A thread every seat declined is DISCHARGED: it stops escalating and
+    // stops asking for anything, exactly like an answered one. /owed.to_close
+    // is the asker's durable row, and since 0153 it names the refusers. This
+    // is the only surface that tells the person who asked that nobody
+    // actually answered.
+    const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, reply_to: null };
+    stub_hub({
+      messages: [
+        {
+          ...base, id: "mine", seq: 7, sender: "laurent", status: "open", title: "my question", body: "q",
+          pending_asks: [], data: { asks: [{ id: "1", text: "take it" }, { id: "2", text: "or review it" }] },
+        },
+      ],
+      owed: {
+        to_answer: [], to_consume: [], waiting_on: [],
+        // `answered_by` is the last non-sender replier whether they answered
+        // or REFUSED — verified against a live hub, which reports
+        // answered_by="continuum" on a thread continuum declined. Treating a
+        // populated answered_by as proof of an answer understates the row.
+        to_close: [{ channel: "commons", id: "mine", seq: 7, title: "my question", answered_by: "continuum", declined_asks: ["1", "2"], declined_by: ["continuum", "core"] }],
+        counts: { to_answer: 0, to_consume: 0 },
+      },
+    });
+    render_page();
+    await screen.findByText("my question");
+    const chip = await screen.findByText("✗ 2 refused, none answered");
+    expect(chip.getAttribute("title")).toContain("Nobody answered this.");
+    expect(chip.getAttribute("title")).toContain("continuum, core");
+  });
+
+  it("an older hub serving no to_close shows the asker no refusal chip", async () => {
+    const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, reply_to: null };
+    stub_hub({
+      messages: [
+        { ...base, id: "mine", seq: 7, sender: "laurent", status: "open", title: "my question", body: "q", pending_asks: [] },
+      ],
+      owed: { to_answer: [], to_consume: [], waiting_on: [], counts: { to_answer: 0, to_consume: 0 } },
+    });
+    render_page();
+    await screen.findByText("my question");
+    expect(screen.queryByText(/refused/)).toBeNull();
+  });
+
+  it("a declining reply chips ✗ declines and is NOT credited as an answer (agora 0153)", async () => {
+    // The hub folds `declines` INTO `answers` and keeps the refused subset,
+    // so `answers` alone counts refusals as discharges — rendering it whole
+    // captioned a refusal "✓ answers", the exact inversion the disposition
+    // exists to prevent. The protocol's instruction to a reader that wants
+    // *answered* is to subtract; this asserts the console does.
+    const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, reply_to: null };
+    stub_hub({
+      messages: [
+        { ...base, id: "root", seq: 1, sender: "core", status: "open", title: "two asks", body: "q", data: { asks: [{ id: "1", text: "first" }, { id: "2", text: "second" }] } },
+        // Answered 1, refused 2. `answers` carries BOTH — that is the hub's
+        // stored shape, not a client mistake.
+        { ...base, id: "r1", seq: 2, sender: "laurent", status: "reply", title: "", body: "one yes one no", reply_to: "root", data: { answers: ["1", "2"], declines: ["2"] } },
+      ],
+    });
+    render_page();
+    await screen.findByText("two asks");
+    fireEvent.click(screen.getByRole("button", { name: /^Show 1 reply/ }));
+    await screen.findByText("one yes one no");
+    // Credited for what it answered, and only that.
+    await screen.findByText("✓ answers 1");
+    await screen.findByText("✗ declines 2");
+    expect(screen.queryByText("✓ answers 1,2")).toBeNull();
+  });
+
+  it("an older hub serving no declines renders exactly as before (no subtraction, nothing marked)", async () => {
+    const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, reply_to: null };
+    stub_hub({
+      messages: [
+        { ...base, id: "root", seq: 1, sender: "core", status: "open", title: "one ask", body: "q", data: { asks: [{ id: "1", text: "do it" }] } },
+        { ...base, id: "r1", seq: 2, sender: "laurent", status: "reply", title: "", body: "done", reply_to: "root", data: { answers: ["1"] } },
+      ],
+    });
+    render_page();
+    await screen.findByText("one ask");
+    fireEvent.click(screen.getByRole("button", { name: /^Show 1 reply/ }));
+    await screen.findByText("done");
+    await screen.findByText("✓ answers 1");
+    expect(screen.queryByText(/declines/)).toBeNull();
+  });
+
   it("a DM row's trash is a two-step confirm that calls POST /leave (operator dm 14)", async () => {
     const now = Date.now() / 1000;
     const fetch_mock = stub_hub({
@@ -993,7 +1256,7 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Show 1 reply/ }));
     await screen.findByText("investigation reopened");
     expect(screen.queryByText("needs reply")).toBeNull();
-    expect(screen.queryByText("decline")).toBeNull();
+    expect(screen.queryByRole("button", { name: "⊘ Decline" })).toBeNull();
   });
 
   it("takes discharge from the Hub, not from replies visible in the window", async () => {
@@ -1604,5 +1867,128 @@ describe("TeamPage AI lanes (read-only contract)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Summarize/ }));
     await screen.findByText("injected summary");
     expect(advisor).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("charters, missions and phases (agora 0146/0140; hub 0.17 wire contract)", () => {
+  it("a gated room's charter debt is a chip whose click READS the charter and re-asks the hub", async () => {
+    // `channel:meta.norms_required` makes the hub refuse this seat's posts
+    // (409) until it has read the room's current charter. The read IS the
+    // receipt, so the console's whole job is to make the read one click —
+    // and then to ask the hub whether the debt cleared rather than
+    // assuming a receipt it cannot mint.
+    const fetch_mock = stub_hub({
+      owed: {
+        to_answer: [], to_consume: [], waiting_on: [], counts: { to_answer: 0, to_consume: 0 },
+        charters: [{ scope: "commons", version: 3, your_receipt: 1, gated: true, read_with: "read_charter(channel='commons')" }],
+      },
+    });
+    render_page();
+    const chip = await screen.findByRole("button", { name: "#commons charter unread — posting gated" });
+    expect(chip.getAttribute("title")).toContain("REFUSES your posts here until you read it");
+    const charter_reads = () =>
+      fetch_mock.mock.calls.filter((c) => String(c[0]).includes("/channels/commons/fs/channel/charter.md")).length;
+    const owed_calls = () => fetch_mock.mock.calls.filter((c) => String(c[0]).includes("/owed")).length;
+    const before_owed = owed_calls();
+    fireEvent.click(chip);
+    await waitFor(() => expect(charter_reads()).toBe(1));
+    await waitFor(() => expect(owed_calls()).toBeGreaterThan(before_owed));
+  });
+
+  it("the hub-scope debt reads GET /charter and says which sections it was not served", async () => {
+    // The hub charter is served as this seat's VIEW — a token economy, not
+    // an access boundary. A reader must never have to wonder whether they
+    // were shown all of it, so the omission and the way out of it are
+    // stated in the document the console renders.
+    const fetch_mock = stub_hub({
+      owed: {
+        to_answer: [], to_consume: [], waiting_on: [], counts: { to_answer: 0, to_consume: 0 },
+        charters: [{ scope: "hub", version: 5, your_receipt: null, read_with: "read_charter() / GET /charter" }],
+      },
+      charter: {
+        version: 5, scope: "hub", text: "# Hub charter\n\nWho is who.", view: ["member"], sliced: true,
+        omitted: ["Owner", "Delegate"], read_all_with: "read_charter(full=True) / GET /charter?full=true",
+        updated_by: "laurent", packaged: false,
+      },
+    });
+    render_page();
+    const chip = await screen.findByRole("button", { name: "hub charter v5 unread" });
+    expect(chip.getAttribute("title")).toContain("you have never read it");
+    fireEvent.click(chip);
+    await screen.findByText("Who is who.");
+    await screen.findByText(/Not shown: Owner, Delegate/);
+    expect(fetch_mock.mock.calls.filter((c) => String(c[0]).endsWith("/charter")).length).toBe(1);
+  });
+
+  it("a hub serving no charters shows no charter surface at all", async () => {
+    stub_hub({ owed: { to_answer: [], to_consume: [], waiting_on: [], counts: { to_answer: 0, to_consume: 0 } } });
+    render_page();
+    await screen.findAllByText("#commons");
+    expect(screen.queryByText(/charter/i)).toBeNull();
+  });
+
+  it("a post the charter gate refuses re-reads /owed, so the fix appears where the refusal did", async () => {
+    // The hub's refusal names `read_charter(channel='commons')` — an MCP
+    // call no console user can type. /owed's charter row is the console's
+    // version of that instruction.
+    const fetch_mock = stub_hub({
+      post_refusal: { status: 409, detail: "this channel requires reading its charter first: read_charter(channel='commons') (v3, at 'channel/charter.md'), then retry" },
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+    const owed_calls = () => fetch_mock.mock.calls.filter((c) => String(c[0]).includes("/owed")).length;
+    const box = await screen.findByPlaceholderText(/^Message #commons/);
+    fireEvent.change(box, { target: { value: "hello" } });
+    const before_owed = owed_calls();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText(/requires reading its charter first/);
+    await waitFor(() => expect(owed_calls()).toBeGreaterThan(before_owed));
+  });
+
+  it("member missions come from the channel roster, which needs no operator key", async () => {
+    // `/channels/{c}/info.members[].mission` is served to every member;
+    // `/admin/missions` is operator-only. Reading the roster is why a
+    // non-operator seat can see what its colleagues are FOR.
+    stub_hub({
+      members: [{ agent_id: "critic", mission: "argue the other side, always" }],
+      info: {
+        channel: { name: "commons", private: false }, meta: { purpose: "cross-package commons" },
+        members: [{ agent_id: "critic", mission: "argue the other side, always" }],
+        response_sla_minutes: 1440, state: "open", charter: null,
+      },
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+    fireEvent.click(screen.getByRole("button", { name: "Open channel members drawer" }));
+    await screen.findByText("argue the other side, always");
+  });
+
+  it("a room's declared phase order renders before you post into it", async () => {
+    stub_hub({
+      info: {
+        channel: { name: "commons", private: false }, meta: { purpose: "cross-package commons" },
+        members: [{ agent_id: "a" }], response_sla_minutes: null, state: "open", charter: null,
+        phases: [{ channel: "commons", key: "phase:api", track: "api", current: "v3", status: "open", next: "v4", steward: "core", declared_by: "laurent" }],
+      },
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+    fireEvent.click(screen.getByRole("button", { name: "Open channel members drawer" }));
+    await screen.findByText("Phases");
+    await screen.findByText("api · v3");
+    await screen.findByText(/next: v4/);
+  });
+
+  it("the seat's standing mission rides its identity, and an older hub simply has none", async () => {
+    stub_hub({ whoami: { id: "laurent", mission: "hold the console's contract with the hub" } });
+    render_page();
+    const marker = await screen.findByText("· mission set");
+    expect(marker.parentElement?.getAttribute("title")).toContain("hold the console's contract with the hub");
+    cleanup();
+
+    stub_hub();
+    render_page();
+    await screen.findAllByText("#commons");
+    expect(screen.queryByText("· mission set")).toBeNull();
   });
 });

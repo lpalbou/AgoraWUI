@@ -6,7 +6,7 @@
 /** Sent on every REST request. The Hub uses this to distinguish current
  * clients from pre-handshake clients; it is client identification, never a
  * second authentication scheme. */
-export const AGORA_WUI_CLIENT_HEADER = "agora-wui/0.2.0";
+export const AGORA_WUI_CLIENT_HEADER = "agora-wui/0.3.0";
 
 /** `operator` is the HUB's own answer about this seat (`/whoami.operator`),
  *  carried through for VISIBILITY decisions only — which controls a console
@@ -14,7 +14,96 @@ export const AGORA_WUI_CLIENT_HEADER = "agora-wui/0.2.0";
  *  decided by the hub, and a refusal renders verbatim. An older hub that
  *  omits the field reads as `false`, which hides a control the hub would
  *  have allowed — the safe direction to be wrong in. */
-export type HubMeta = { ok: boolean; hub_url: string; seat: string; seat_key_present: boolean; operator: boolean };
+export type HubMeta = {
+  ok: boolean;
+  hub_url: string;
+  seat: string;
+  seat_key_present: boolean;
+  operator: boolean;
+  /** The OPERATOR's standing charge for this seat (`/whoami.mission`, hub
+   *  ≥ 0.17.1 wire contract). Only the operator writes it — no seat-
+   *  authenticated surface can — so it is identity, not self-description.
+   *  "" on older hubs and on seats the operator gave none. */
+  mission: string;
+  /** `/whoami.hub_charter` — a POINTER, never text: the hub charter is the
+   *  standing role model, and re-pushing an authority-labelled document on
+   *  every session-start call is exactly what the hub's ADR-0002 forbids.
+   *  `current` = this seat holds a receipt for the version in force;
+   *  `view_current` = the slice it read still covers the seat it now is.
+   *  null on hubs that serve no pointer. */
+  hub_charter: HubCharterPointer | null;
+};
+
+/** The `/whoami.hub_charter` pointer (hub ≥ 0.14.1 for the view fields,
+ *  documented in 0.17.1). `read_with` is the hub's OWN statement of the call
+ *  that clears it — carried, never guessed. */
+export type HubCharterPointer = {
+  version: number;
+  your_receipt: number | null;
+  current: boolean;
+  view?: string[];
+  view_current?: boolean;
+  read_with?: string;
+  note?: string;
+};
+
+/** One `/owed.charters` row (hub 0146/2): a charter this seat has NOT read
+ *  at its current version. Not a debt that escalates and never a wake —
+ *  attention, and self-clearing, because the READ records the receipt.
+ *  `scope` is "hub" or a channel name; `gated` is true only where the room
+ *  sets `channel:meta.norms_required`, in which case the hub is ALREADY
+ *  refusing this seat's posts there with a 409 until the read. */
+export type HubCharterDebt = {
+  scope: string;
+  version: number;
+  your_receipt: number | null;
+  read_with?: string;
+  gated?: boolean;
+  reason?: string;
+};
+
+/** One `/owed.phases` or `/channels/{c}/info.phases` row (hub 0140/2): a
+ *  channel's declared phase order — which version of the work is in force
+ *  and whether the next may start. Advisory by construction: the hub cannot
+ *  know what a message works on, so its whole power is being visible. */
+export type HubPhaseRow = {
+  channel: string;
+  key: string;
+  track: string;
+  current: string;
+  status?: string;
+  next?: string;
+  steward?: string;
+  paths?: string[];
+  note?: string;
+  declared_by?: string;
+  declared_at?: number;
+  version?: number;
+};
+
+/** `GET /charter` — the hub charter TEXT in this seat's view, and reading it
+ *  is what records the receipt (delivery proof, never agreement). `sliced`
+ *  says the served text is a role-scoped slice; `omitted` names the sections
+ *  left out, and `read_all_with` is the hub's own pointer at the whole
+ *  document (`?full=true`). */
+export type HubCharterDoc = {
+  version?: number;
+  text?: string;
+  scope?: string;
+  your_receipt?: number;
+  view?: string[];
+  powers?: string[];
+  sliced?: boolean;
+  omitted?: string[];
+  view_note?: string;
+  bytes?: number;
+  full_bytes?: number;
+  read_all_with?: string;
+  updated_by?: string;
+  updated_at?: number;
+  packaged?: boolean;
+  delegate_brief?: string;
+};
 
 /** Hub /healthz — the protocol pin source (protocol.md: clients compare
  *  the advertised `protocol` against their own and WARN on mismatch,
@@ -41,6 +130,12 @@ export type HubEvidence = Record<string, unknown>;
 export type HubMessageData = {
   asks?: HubAsk[];
   answers?: string[];
+  /** Agora 0.17 (backlog 0153): of the ask ids in `answers`, the ones this
+   *  reply REFUSES rather than answers. Always a subset the HUB fills in —
+   *  it folds `declines` into `answers` at post time, so `answers` keeps
+   *  its one meaning (the ids this reply discharges). A reader that wants
+   *  *answered* specifically must subtract this. Absent on older hubs. */
+  declines?: string[];
   attachments?: HubAttachment[];
   evidence?: HubEvidence[];
   consumes?: string[];
@@ -80,13 +175,21 @@ export type HubFsFile = { path: string; content: string; content_b64?: string; e
  *  charter visibility ask, 2026-07-13). `charter` is null when unset. */
 export type HubChannelInfo = {
   channel?: { name?: string; private?: boolean; created_by?: string; created_at?: number };
-  meta?: { purpose?: string; norms?: string; expected_traffic?: string } | null;
-  members?: Array<{ agent_id?: string; about?: string } | string>;
+  meta?: { purpose?: string; norms?: string; expected_traffic?: string; norms_required?: boolean } | null;
+  /** `mission` is the OPERATOR's charge for that seat, served to every
+   *  member beside its self-written `about` (hub 0.17.1 wire contract). It
+   *  is the only surface that resolves "the seats holding the other
+   *  perspectives" to a list, and — unlike `/admin/missions` — it needs no
+   *  operator key. "" where the operator set none. */
+  members?: Array<{ agent_id?: string; about?: string; mission?: string; role?: string } | string>;
   response_sla_minutes?: number | null;
   language?: string | null;
   state?: string | null;
   /** Older hubs inline the text; agora/0.4 serves a channel-fs descriptor. */
   charter?: string | { path?: string; version?: number; updated_by?: string; updated_at?: number } | null;
+  /** Declared phase order for this room (hub 0140/2) — part of "what you
+   *  need to know before you post here". Absent on older hubs. */
+  phases?: HubPhaseRow[];
 };
 
 export type HubMessage = {
@@ -109,8 +212,9 @@ export type HubMessage = {
    *  null = no statement (retracted rows skip discharge computation). */
   has_resolved_reply?: boolean | null;
   /** Ask ids on this message still awaiting an answer (hub-computed
-   *  discharge state; null = no statement). A decline reply cites these in
-   *  answers=[...] so the obligation clears mechanically. */
+   *  discharge state; null = no statement). A discharging reply cites these
+   *  in answers=[...] (or declines=[...]) so the obligation clears
+   *  mechanically. */
   pending_asks?: string[] | null;
   /** Retraction (agora 0097, hub ≥ 0.12.16): the hub already tombstones
    *  body/title and downgrades status — this flag drives the dimmed
@@ -370,7 +474,9 @@ export class HubClient {
   }
 
   async meta(): Promise<HubMeta> {
-    const identity = await this._fetch("hub_whoami", "/whoami") as { id?: string; operator?: boolean };
+    const identity = await this._fetch("hub_whoami", "/whoami") as {
+      id?: string; operator?: boolean; mission?: string; hub_charter?: HubCharterPointer;
+    };
     const origin = this.base_url || (typeof window === "undefined" ? "" : window.location.origin);
     // Evidence-derived, never asserted: a served identity proves an
     // authenticated path exists — true in direct mode (bearer) AND behind
@@ -383,7 +489,33 @@ export class HubClient {
       // Carried, never re-derived: the console shows an operator the controls
       // the hub would honor. The hub still decides every act.
       operator: Boolean(identity?.operator),
+      // Both carried verbatim from the hub's own answer about this seat.
+      // The console renders them; it never authors, softens, or infers
+      // either — a seat that could edit its own charge has none, and a
+      // charter receipt the client invented would be a forged receipt.
+      mission: String(identity?.mission || ""),
+      hub_charter:
+        identity?.hub_charter && typeof identity.hub_charter === "object"
+          ? {
+              ...identity.hub_charter,
+              version: Number(identity.hub_charter.version || 0),
+              your_receipt:
+                typeof identity.hub_charter.your_receipt === "number" ? identity.hub_charter.your_receipt : null,
+              current: Boolean(identity.hub_charter.current),
+            }
+          : null,
     };
+  }
+
+  /** Read the HUB charter (`GET /charter`) — and record this seat's receipt,
+   *  which is the only thing that clears a hub-scope charter debt. The text
+   *  served is this seat's VIEW (common sections plus the ones addressed to
+   *  the kinds of seat it is); `full=true` asks for the whole document,
+   *  which the hub serves to anyone. The response always names what it left
+   *  out, so the console never has to guess whether it is showing all of it.
+   *  404 on hubs that predate the hub charter — callers feature-detect. */
+  async charter(full = false): Promise<HubCharterDoc> {
+    return (await this._fetch("hub_charter", `/charter${full ? "?full=true" : ""}`)) as HubCharterDoc;
   }
 
   /** Unauthenticated on the hub; forwards even without a seat key. */
@@ -561,6 +693,10 @@ export class HubClient {
       to?: string[];
       reply_to?: string;
       answers?: string[];
+      /** Ask ids this reply DECLINES rather than answers (agora 0.17).
+       *  Validated exactly like `answers` by the hub, which folds these
+       *  into it; the console never derives discharge from it. */
+      declines?: string[];
       /** Opaque Hub protocol metadata, validated solely by Agora Hub. */
       data?: Record<string, unknown>;
       /** Attachment refs (agora 0091): {id, filename?}; the hub validates
@@ -885,7 +1021,25 @@ export class HubClient {
     counts?: { to_answer?: number; to_consume?: number };
     to_answer?: Array<Record<string, unknown>>;
     to_consume?: Array<Record<string, unknown>>;
+    /** ASKER-side hygiene (hub agora-0116): the viewer's OWN open threads
+     *  that are fully discharged but not authoritatively closed. Advisory,
+     *  never waking. Since 0153 each row also carries `declined_asks` and
+     *  `declined_by` — a thread every seat REFUSED is discharged too, so
+     *  without them this row tells the asker their question was answered.
+     *  Absent on older hubs. */
+    to_close?: Array<Record<string, unknown>>;
     waiting_on?: Array<Record<string, unknown>>;
+    /** Charters this seat is BEHIND on (hub 0146/2), hub scope first. Not a
+     *  debt and never a wake — but the one row here that carries `gated`
+     *  describes a room where the hub is already refusing this seat's posts
+     *  until it reads. It rides `/owed` because that is the one call every
+     *  reception pass makes; the console reads it there for the same
+     *  reason. Absent on older hubs. */
+    charters?: HubCharterDebt[];
+    /** OPEN phase declarations across the seat's channels (hub 0140/2): a
+     *  standing constraint on which work is legitimate right now, carried
+     *  here rather than being a debt. Absent on older hubs. */
+    phases?: HubPhaseRow[];
   }> {
     const res = await this._fetch("hub_owed", "/owed");
     const obj = res && typeof res === "object" ? (res as any) : {};
@@ -893,7 +1047,10 @@ export class HubClient {
       ...obj,
       to_answer: Array.isArray(obj.to_answer) ? obj.to_answer : [],
       to_consume: Array.isArray(obj.to_consume) ? obj.to_consume : [],
+      to_close: Array.isArray(obj.to_close) ? obj.to_close : [],
       waiting_on: Array.isArray(obj.waiting_on) ? obj.waiting_on : [],
+      charters: Array.isArray(obj.charters) ? obj.charters : [],
+      phases: Array.isArray(obj.phases) ? obj.phases : [],
     };
   }
 

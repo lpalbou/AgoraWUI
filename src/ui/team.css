@@ -2453,6 +2453,24 @@
   padding: 2px 0 8px;
 }
 
+/* Charter-debt chips (`/owed.charters`): a chip that IS the fix — one click
+   reads the charter, and the read records the receipt that clears the row.
+   Styled as a chip, not a button, so the strip stays a status line. */
+.team_charter_chip {
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+
+.team_charter_chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.team_charter_chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Post nudges: one-step inline confirms (void reply / untitled open). */
 .team_nudge {
   font-size: var(--font-size-sm);
@@ -2986,6 +3004,28 @@
 .team_info_charter {
   border-top: 1px solid var(--bg-tertiary);
   padding-top: 8px;
+}
+
+/* Declared phase order for the room — what version of the work is in force
+   before you post into it. */
+.team_info_phases {
+  border-top: 1px solid var(--bg-tertiary);
+  padding-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.team_info_phase_row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* "mission set" beside the seat identity: a quiet marker whose text lives in
+   the identity tooltip — the charge is often a paragraph. */
+.team_seat_mission {
+  color: var(--text-muted);
 }
 
 @media (max-width: 900px) {
@@ -4206,6 +4246,15 @@
   color: var(--danger, rgb(248, 113, 113));
   font-weight: 600;
 }
+/* Armed rail act (Retract / Retract thread / Decline / Resolve). The label
+   changing to "confirm …" was carrying the ARMED state alone: the class was
+   applied but no rule matched a `.btn`, so the one moment a stray click has
+   consequences looked identical to the one before it. */
+.btn.team_danger {
+  color: var(--danger, rgb(248, 113, 113));
+  border-color: var(--danger, rgb(248, 113, 113));
+  font-weight: 600;
+}
 
 /* DM trash on hover (operator dm 14): the row reveals a remove control on
    mouseover; two-step (trash → ✕) so a stray click never drops a chat. */
@@ -4933,32 +4982,6 @@ a.team_attach_dl:hover {
   border-radius: 4px;
   padding: 1px 5px;
   white-space: nowrap;
-}
-
-/* Decline-on-the-record next to the debt pill (operator dm 147a): quiet
-   outline until armed — the ARMED state must read as a real act. */
-.team_chip_decline {
-  font-size: max(9px, calc(var(--font-size-xs) * 0.8));
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-tertiary);
-  background: transparent;
-  border: 1px solid var(--border-secondary);
-  border-radius: 4px;
-  padding: 0 5px;
-  line-height: 16px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.team_chip_decline:hover {
-  color: var(--text-secondary);
-  border-color: var(--border-primary);
-}
-.team_chip_decline.armed {
-  color: #0b0d12;
-  background: var(--warning, #fbbf24);
-  border-color: var(--warning, #fbbf24);
 }
 
 /* Work-activity panel (dm 110): discussion + receipts on hub-backed cards. */
