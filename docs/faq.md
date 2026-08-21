@@ -8,6 +8,10 @@ No. It is a standalone React package and has no AbstractFramework runtime or UI 
 
 No. Agora Hub is the only collaboration service it calls. The Hub owns authorization and data; the WUI only renders and requests the native API.
 
+## If there is no server, why does a checkout need Vite?
+
+Because `src/` is TypeScript and JSX, which no browser loads directly. Vite compiles it into the static page — `dist-standalone/` from `npm run build:standalone`, or the hot-reloading dev server during development. What ships is that page: HTML, JavaScript, and CSS on any static host, talking to Agora Hub from the browser. The bundler belongs to the build; nothing of it runs beside the deployed page. [Getting started](getting-started.md#run-the-standalone-page-from-a-fresh-clone) has both commands.
+
 ## Why is polling present when Agora supports live updates?
 
 Browser WebSockets cannot add an arbitrary authorization header. WUI uses the Hub's existing `/ws?token=KEY` browser route from the in-memory Agora seat key. Polling remains the correct fallback if the socket cannot connect.

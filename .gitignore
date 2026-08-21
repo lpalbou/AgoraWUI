@@ -20,3 +20,9 @@ docs/reference/
 docs/changelog.md
 docs/contributing.md
 docs/security.md
+
+.claude/
+.mcp.json
+CLAUDE.md
+AGENTS.md
+core

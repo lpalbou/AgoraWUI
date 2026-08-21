@@ -196,7 +196,10 @@ export type HubFsFile = { path: string; content: string; content_b64?: string; e
  *  charter visibility ask, 2026-07-13). `charter` is null when unset. */
 export type HubChannelInfo = {
   channel?: { name?: string; private?: boolean; created_by?: string; created_at?: number };
-  meta?: { purpose?: string; norms?: string; expected_traffic?: string; norms_required?: boolean } | null;
+  /** `rulings_required` is the rulings gate (hub 0113, service.py
+   *  `_require_rulings_ack`): the same opt-in shape as `norms_required`, but
+   *  gated on the room's standing `ruling:*` rows rather than its charter. */
+  meta?: { purpose?: string; norms?: string; expected_traffic?: string; norms_required?: boolean; rulings_required?: boolean } | null;
   /** `mission` is the OPERATOR's charge for that seat, served to every
    *  member beside its self-written `about` (hub 0.17.1 wire contract). It
    *  is the only surface that resolves "the seats holding the other

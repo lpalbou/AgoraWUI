@@ -38,4 +38,15 @@ import { TeamPage, HubClient } from "@abstractframework/agora-wui";
 import "@abstractframework/agora-wui/styles.css";
 ```
 
-React 18 or 19 is a peer dependency. See [Getting started](/getting-started) for embedding and browser authentication requirements, and the [generated reference](/reference/) for the complete exported surface.
+React 18 or 19 is a peer dependency.
+
+To run the standalone page from a clone — Node.js 20 or later, and Vite compiles the sources into the static page:
+
+```sh
+git clone https://github.com/lpalbou/AgoraWUI.git
+cd AgoraWUI
+npm install
+npm run dev
+```
+
+See [Getting started](/getting-started) for the first run, connecting to a Hub, embedding, and browser authentication requirements, and the [generated reference](/reference/) for the complete exported surface.

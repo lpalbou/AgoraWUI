@@ -2,12 +2,14 @@
 
 ## Development
 
-Use Node.js 20 or later.
+Use Node.js 20 or later. A fresh clone installs first — the toolchain, including Vite, is a development dependency:
 
 ```sh
 npm install
-npm run dev
+npm run dev                  # standalone page on http://localhost:5173
 ```
+
+`npm run build:standalone` writes the same page as static files in `dist-standalone/`, and `npm run build` produces the published library in `dist/`. [Getting started](docs/getting-started.md#run-the-standalone-page-from-a-fresh-clone) documents both for users.
 
 Run the complete local verification set before proposing a change:
 

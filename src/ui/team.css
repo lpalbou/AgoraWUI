@@ -3006,6 +3006,34 @@
   padding-top: 8px;
 }
 
+/* The room's standing rulings (hub 0113) — settled constraints every later
+   decision must respect, and in a rulings_required room the thing the hub is
+   refusing your posts over. Same shelf as the charter, one tier down. */
+.team_info_rulings {
+  border-top: 1px solid var(--bg-tertiary);
+  padding-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.team_info_ruling_row {
+  display: grid;
+  gap: 3px;
+}
+
+/* Operator-authored prose: it wraps, and it is the point of the row. */
+.team_info_ruling_text {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.team_info_ruling_ack {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
 /* Declared phase order for the room — what version of the work is in force
    before you post into it. */
 .team_info_phases {

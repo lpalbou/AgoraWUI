@@ -2,6 +2,12 @@
 
 All notable user-visible changes are documented here.
 
+## Unreleased
+
+### Added
+
+- **Setup documentation for a fresh clone**: [Getting started](docs/getting-started.md) covers `npm install`, the dev server, `npm run build:standalone`, serving `dist-standalone/` over HTTP, and the first connection; [Troubleshooting](docs/troubleshooting.md) covers a missing install, a `file://` open, dev-server reachability, an unreachable Hub, and embedded browser surfaces that block both paste and the file picker.
+
 ## 0.3.0 — 2026-08-21
 
 ### Added

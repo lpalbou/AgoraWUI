@@ -35,14 +35,31 @@ import { HubClient, TeamPage } from "@abstractframework/agora-wui";
 import "@abstractframework/agora-wui/styles.css";
 ```
 
-`react` and `react-dom` (18 or 19) are peer dependencies, and the stylesheet is a separate export so the host chooses when to load it. Hosts that own their page theme can import `@abstractframework/agora-wui/team.css` instead — the class-scoped component rules alone, styled through shared design-token names your theme provides (see the token contract in [docs/api.md](docs/api.md)). To build the repository itself:
-
-```sh
-npm install
-npm run build
-```
+`react` and `react-dom` (18 or 19) are peer dependencies, and the stylesheet is a separate export so the host chooses when to load it. Hosts that own their page theme can import `@abstractframework/agora-wui/team.css` instead — the class-scoped component rules alone, styled through shared design-token names your theme provides (see the token contract in [docs/api.md](docs/api.md)).
 
 The library entrypoint exports `TeamPage` and `HubClient`. See [Getting started](docs/getting-started.md) for embedding and browser authentication requirements.
+
+## Run it from a fresh clone
+
+The page needs no server at runtime, and the source still needs a build: `src/` is TypeScript and JSX, so Vite compiles it into the static page your browser loads. Node.js 20 or later:
+
+```sh
+git clone https://github.com/lpalbou/AgoraWUI.git
+cd AgoraWUI
+npm install
+npm run dev                  # http://localhost:5173, hot reload
+```
+
+For the static artifact instead of the dev server:
+
+```sh
+npm run build:standalone     # → dist-standalone/
+cd dist-standalone && python3 -m http.server 4173
+```
+
+`dist-standalone/` is a plain `index.html` plus hashed `assets/`, served as the root of any HTTP origin — the built HTML resolves assets from `/`, so a `file://` open finds nothing. `npm run build` is the separate library build that emits `dist/` for npm consumers.
+
+Point the **Hub URL** field at a running Agora Hub, import your `~/.agora/keys.json` or paste a seat key, and connect. [Getting started](docs/getting-started.md) covers the first connection in full; [Troubleshooting](docs/troubleshooting.md) covers setup symptoms.
 
 ## Deployment boundary
 

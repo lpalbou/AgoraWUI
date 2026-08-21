@@ -22,7 +22,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { AfChip, ChatComposer, Icon, Markdown } from "./primitives";
-import { HubClient, type HubAttachment, type HubChannel, type HubChannelInfo, type HubCharterDebt, type HubCharterPointer, type HubFsEntry, type HubFsFile, type HubHealth, type HubMessage, type HubPhaseRow, type HubReputationBoard, type HubReputationVote, type HubSearchHit, type HubSearchReport } from "../lib/hub_client";
+import { HubClient, type HubAttachment, type HubChannel, type HubChannelInfo, type HubCharterDebt, type HubCharterPointer, type HubFsEntry, type HubFsFile, type HubHealth, type HubMessage, type HubPhaseRow, type HubReputationBoard, type HubReputationVote, type HubRulingRow, type HubSearchHit, type HubSearchReport } from "../lib/hub_client";
 import { FileViewer, resolve_file_mode, type FileView } from "./team_file_viewer";
 import { Modal } from "./modal";
 import { MemoMarkdown } from "./memo_markdown";
@@ -472,6 +472,15 @@ export function TeamPage(props: {
    *  which is why the console never marks one read locally. Empty on hubs
    *  that serve no `charters`, and the surface simply does not appear. */
   const [charter_debts, set_charter_debts] = useState<HubCharterDebt[]>([]);
+  /** The SELECTED room's standing rulings and this seat's unacknowledged
+   *  subset (hub 0113, served on the channel digest). Unlike charter debts
+   *  — which /owed states hub-wide — rulings are per-room and only the
+   *  digest carries them, so this is fetched per selected channel. `null`
+   *  means "not known here": either not fetched yet, or a pre-0113 hub that
+   *  omits both arrays, in which case no rulings surface renders at all. */
+  const [rulings, set_rulings] = useState<{ all: HubRulingRow[]; unacked: HubRulingRow[]; gated: boolean } | null>(null);
+  const [ruling_busy, set_ruling_busy] = useState(false);
+  const [ruling_error, set_ruling_error] = useState("");
   /** Hub-computed, viewer-scoped address cues. */
   const [to_me_map, set_to_me_map] = useState<Record<string, Set<number>>>({});
   /** Hub-escalated seqs per channel (backlog 0010): escalated /
@@ -1477,6 +1486,10 @@ export function TeamPage(props: {
     read_fired.current = new Set();
     set_verify_state(null);
     set_info(null);
+    // Rulings are per-ROOM: the previous room's standing constraints must
+    // never render (or be acked) under this room's header.
+    set_rulings(null);
+    set_ruling_error("");
     member_note_seq.current = 0; // membership notices are per-channel seqs
     // Optimistic message ratings are per-channel rows (adversary P2-7):
     // a stale entry must never overlay another channel's tally.
@@ -1552,6 +1565,10 @@ export function TeamPage(props: {
     scroll_pending.current = true;
     void refresh_messages(selected);
     if (!selected) return;
+    // Standing rulings ride the switch, not the drawer: in a gated room the
+    // hub is already refusing this seat's posts, and the composer must say
+    // so BEFORE a post is typed and lost (usability critic F13's rule).
+    void refresh_rulings(selected);
     // Standing drawers follow the channel (dm 53/55).
     if (drawer === "files") load_files();
     if (drawer === "members") load_info();
@@ -1829,6 +1846,67 @@ export function TeamPage(props: {
     }
   }
 
+  /** Read the selected room's standing rulings off its digest (hub 0113).
+   *  Feature-detected on the arrays being PRESENT: a pre-0113 hub serves
+   *  neither, and `null` keeps every rulings surface off the page rather
+   *  than rendering "0 rulings" as if the room had none. Failure is silent
+   *  for the same reason a badge failure is — this is a read of somebody
+   *  else's state, and the thread view must not depend on it. */
+  async function refresh_rulings(channel: string): Promise<void> {
+    if (!channel) return;
+    const gen = chan_gen.current;
+    try {
+      const d = await hub.digest(channel);
+      if (gen !== chan_gen.current) return;
+      const all = d?.rulings;
+      const unacked = d?.unacknowledged_rulings;
+      if (!Array.isArray(all) && !Array.isArray(unacked)) {
+        set_rulings(null);
+        return;
+      }
+      const unacked_rows = Array.isArray(unacked) ? unacked : [];
+      // Whether the room GATES on them is `channel:meta.rulings_required`,
+      // which only /info carries — fetched solely when something is
+      // unacknowledged, so a room with no rulings costs no extra call. The
+      // gate decides warn-vs-quiet, never whether the rows render.
+      let gated = false;
+      if (unacked_rows.length) {
+        gated = await hub
+          .channel_info(channel)
+          .then((i) => Boolean(i?.meta?.rulings_required))
+          .catch(() => false);
+        if (gen !== chan_gen.current) return;
+      }
+      set_rulings({ all: Array.isArray(all) ? all : [], unacked: unacked_rows, gated });
+    } catch {
+      // A digest read that fails says nothing about the room's rulings —
+      // leave whatever is already known rather than claiming there are none.
+    }
+  }
+
+  /** Acknowledge standing rulings — the console's version of
+   *  `POST /channels/{c}/ruling-acks`, which is the ONLY thing that clears a
+   *  `rulings_required` posting gate. Delivery, never agreement (hub 0113):
+   *  the button records the read; disagreeing is a message in the room, and
+   *  the label says so. Refusals (revoked 409, out-of-scope 403, unknown
+   *  404) render verbatim — the console never pre-judges the hub. */
+  async function ack_rulings_here(keys: string[]): Promise<void> {
+    if (!selected || !keys.length || ruling_busy) return;
+    set_ruling_busy(true);
+    set_ruling_error("");
+    try {
+      const res = await hub.ack_rulings(selected, keys);
+      const n = (res?.acked || keys).length;
+      set_notice(`Acknowledged ${n} standing ruling${n === 1 ? "" : "s"}.`);
+      setTimeout(() => set_notice(""), 3000);
+      await refresh_rulings(selected);
+    } catch (e: any) {
+      set_ruling_error(String(e?.message || e || "acknowledging the ruling failed"));
+    } finally {
+      set_ruling_busy(false);
+    }
+  }
+
   /** Load channel About + members + blocks + retired into the Members
    *  drawer (operator dm 55: members are now their own drawer). ALWAYS
    *  fetches fresh (adversary P2-8 folded the dead skip-if-loaded path —
@@ -1838,6 +1916,10 @@ export function TeamPage(props: {
     {
       const gen = chan_gen.current;
       set_info("loading");
+      // The drawer is where the rulings TEXT lives, so an explicit open
+      // re-reads them for the same reason it re-reads members: opening
+      // means "show me this room NOW", not "show me the last snapshot".
+      void refresh_rulings(selected);
       set_members(null);
       set_members_error("");
       set_blocked(null);
@@ -3533,6 +3615,12 @@ export function TeamPage(props: {
       // console's version of that instruction: a chip that opens the
       // charter and records the receipt.
       if (/requires reading its charter/i.test(msg)) void refresh_owed();
+      // The RULINGS gate (409, `channel:meta.rulings_required`, hub 0113)
+      // is the same shape one tier up: the refusal names GET .../digest and
+      // POST .../ruling-acks, neither of which a console user can type.
+      // Re-read the digest so the unacknowledged rows — and the button that
+      // clears them — appear instead of a dead-ended raw error.
+      if (/acknowledging standing rulings/i.test(msg)) void refresh_rulings(selected);
     } finally {
       set_posting(false);
     }
@@ -4000,6 +4088,64 @@ export function TeamPage(props: {
             </div>
           );
         })()}
+        {/* STANDING RULINGS (hub 0113) — the room's settled constraints, not
+            one thread's decision: operator-authored `ruling:*` store rows
+            that every later decision must respect. Served on the digest
+            (scoped to this seat), so a pre-0113 hub renders nothing here.
+            Acknowledging is DELIVERY, never agreement — the button records
+            the read and the note says where disagreement belongs. */}
+        {rulings?.all.length ? (
+          <div className="team_info_rulings">
+            <div className="muted team_note" style={{ marginBottom: 4 }}>
+              Standing rulings {rulings.unacked.length ? `(${rulings.unacked.length} unacknowledged)` : ""}
+            </div>
+            {rulings.all.map((r) => {
+              const pending = rulings.unacked.find((u) => u.key === r.key) || null;
+              const scope = (r.value?.scope || []).join(", ");
+              return (
+                <div key={r.key} className="team_info_ruling_row">
+                  <AfChip tone={pending ? "warning" : "muted"} size="sm" title={`Store row ${r.key}@v${r.version}`}>
+                    {r.key}
+                    {pending ? " · unacknowledged" : " · acknowledged"}
+                  </AfChip>
+                  {r.value?.text ? <div className="team_info_ruling_text">{String(r.value.text)}</div> : null}
+                  <span className="muted team_note">
+                    v{r.version}
+                    {scope ? ` · scope: ${scope}` : ""}
+                    {r.updated_by ? ` · by ${r.updated_by}` : ""}
+                    {/* An ack_version BELOW the row version is the honest
+                        reason a row is back: the operator edited a ruling
+                        this seat had already acknowledged. */}
+                    {pending && typeof pending.ack_version === "number" ? ` · you acknowledged v${pending.ack_version}` : ""}
+                  </span>
+                </div>
+              );
+            })}
+            {rulings.unacked.length ? (
+              <div className="team_info_ruling_ack">
+                <button
+                  className="btn"
+                  disabled={ruling_busy}
+                  title={
+                    `Record that you have read ${rulings.unacked.map((r) => r.key).join(", ")} at their current version ` +
+                    `(POST /channels/${selected}/ruling-acks).` +
+                    (rulings.gated ? " This room sets rulings_required, so it is also what lifts the 409 on your posts here." : "") +
+                    " Acknowledging is delivery, never agreement — disagree on the record, in the room."
+                  }
+                  onClick={() => void ack_rulings_here(rulings.unacked.map((r) => r.key))}
+                >
+                  {ruling_busy ? "Acknowledging…" : `Acknowledge ${rulings.unacked.length} ruling${rulings.unacked.length === 1 ? "" : "s"}`}
+                </button>
+                {rulings.gated ? (
+                  <div className="muted team_note" title="channel:meta.rulings_required — the hub refuses a post from any seat with an unacknowledged in-scope ruling. It forces attention to the constraints, never agreement with them.">
+                    rulings_required — posting here is gated until each of these is acknowledged.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {ruling_error ? <div className="page_error mono">{ruling_error}</div> : null}
+          </div>
+        ) : null}
         {/* Declared phase order (hub 0140/2). Advisory by construction: the
             hub cannot know what a message works on, so the whole power of a
             phase is being visible before you post. Served on /info; absent
@@ -5229,6 +5375,7 @@ export function TeamPage(props: {
   const charter_hub_debt = charter_debts.find((d) => d.scope === HUB_CHARTER_SCOPE) || null;
   const charter_room_debts = charter_debts.filter((d) => d.scope !== HUB_CHARTER_SCOPE);
   const charter_here = charter_room_debts.find((d) => d.scope === selected) || null;
+  const rulings_gated = Boolean(rulings?.gated);
   const charter_gated_elsewhere = charter_room_debts.filter((d) => d.gated && d.scope !== selected);
   const charter_quiet_elsewhere = charter_room_debts.filter((d) => !d.gated && d.scope !== selected);
 
@@ -5265,7 +5412,15 @@ export function TeamPage(props: {
       {/* Status strip renders ONLY when something needs saying — the
           permanent toolbar row was chrome tax (design critic: 5 bars
           before the first message). */}
-      {(health?.protocol && health.protocol !== PINNED_PROTOCOL) || health?.paused || error || vote_error || notice || charter_debts.length || (meta && !meta.seat_key_present) ? (
+      {(health?.protocol && health.protocol !== PINNED_PROTOCOL) ||
+      health?.paused ||
+      error ||
+      vote_error ||
+      notice ||
+      charter_debts.length ||
+      rulings?.unacked.length ||
+      ruling_error ||
+      (meta && !meta.seat_key_present) ? (
         <div className="team_statusstrip">
           {meta && !meta.seat_key_present ? (
             <span className="chip mono warn" title="The Hub session is read-only.">
@@ -5320,6 +5475,33 @@ export function TeamPage(props: {
               #{d.scope} posting gated
             </button>
           ))}
+          {/* STANDING RULINGS (hub 0113) — the charter gate's sibling, one
+              tier down: not the room's whole rulebook but the individual
+              constraints every later decision must respect. The chip is the
+              unacknowledged count for THIS room; the Members drawer holds
+              the text and the acknowledge control. In a `rulings_required`
+              room the hub is already refusing posts, so it wears warn. */}
+          {rulings?.unacked.length ? (
+            <button
+              className={`chip mono team_charter_chip ${rulings_gated ? "warn" : ""}`}
+              onClick={() => {
+                if (drawer !== "members") toggle_drawer("members");
+              }}
+              title={
+                `${rulings.unacked.length} standing ruling(s) in #${selected} you have not acknowledged at their current version: ` +
+                rulings.unacked.map((r) => `${r.key} (v${r.version})`).join(", ") +
+                (rulings_gated
+                  ? ". This room sets rulings_required: the hub REFUSES your posts here (409) until each is acknowledged."
+                  : ". Nothing is blocked — acknowledging records that you have read them.") +
+                " Acknowledging is delivery, never agreement: disagree on the record, in the room."
+              }
+            >
+              {rulings_gated
+                ? `#${selected} rulings unacknowledged — posting gated`
+                : `${rulings.unacked.length} standing ruling${rulings.unacked.length === 1 ? "" : "s"} unacknowledged`}
+            </button>
+          ) : null}
+          {ruling_error ? <span className="page_error mono">{ruling_error}</span> : null}
           {charter_quiet_elsewhere.length ? (
             <span
               className="chip mono muted"

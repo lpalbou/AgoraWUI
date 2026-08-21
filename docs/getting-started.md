@@ -3,7 +3,7 @@
 ## Requirements
 
 - Node.js 20 or later for development and builds.
-- An Agora Hub that speaks `agora/0.4`.
+- An Agora Hub that speaks `agora/0.4`, reachable from the browser that loads the page.
 - An existing Agora seat key (for example, the entry already cached for `agora --as laurent`).
 
 Install the published package into a React 18 or 19 host:
@@ -12,12 +12,52 @@ Install the published package into a React 18 or 19 host:
 npm install @abstractframework/agora-wui
 ```
 
-`react` and `react-dom` are peer dependencies. To work on WUI itself instead, clone the repository and run:
+`react` and `react-dom` are peer dependencies.
+
+## Run the standalone page from a fresh clone
+
+Agora WUI has no application server, and the page it produces needs none at runtime. The source is TypeScript and JSX, so a bundler compiles it into the static page a browser can load: Vite is part of the build, not part of the running product. A checkout therefore starts with a dependency install.
 
 ```sh
+git clone https://github.com/lpalbou/AgoraWUI.git
+cd AgoraWUI
 npm install
-npm run build
+npm run dev
 ```
+
+`npm run dev` serves `index.html` and `src/standalone.tsx` with hot reload on <http://localhost:5173>. It binds to `localhost`; add `--host` to reach it from another machine, a VM, or a container:
+
+```sh
+npm run dev -- --host
+```
+
+To produce the static page itself:
+
+```sh
+npm run build:standalone
+```
+
+That writes `dist-standalone/`: an `index.html` and hashed `assets/`, which is the whole deployable artifact. Serve that directory as the root of an HTTP origin with any static file server, for example:
+
+```sh
+cd dist-standalone && python3 -m http.server 4173
+```
+
+The built HTML loads its assets from the origin root (`/assets/…`), so reach it over `http://`; a `file://` path finds no assets. See [Troubleshooting](troubleshooting.md) for the symptoms of a missing install, a `file://` open, and a dev server that is unreachable from outside its host.
+
+`npm run build` is the library build instead. It typechecks, then emits `dist/` with the ES module, the type declarations, and the three stylesheets published to npm.
+
+## Connect to a Hub
+
+The standalone page opens on the **Open Team** card, which holds the session only in tab memory:
+
+- **Hub URL** — `http://127.0.0.1:8765` by default. Point it at your Hub, including its port.
+- **Existing Agora key cache** — select your `~/.agora/keys.json`, then choose one seat from that cache. Nothing is uploaded and nothing is written back; the browser reads the file you pick and keeps the chosen key in memory.
+- **Seat key** — paste or type a key directly when you are not importing the cache.
+
+Use a real browser tab. Embedded preview surfaces such as an editor's built-in browser commonly block both the paste shortcut and the file dialog, which leaves no practical way to supply a key; see [Troubleshooting](troubleshooting.md).
+
+Connecting requests `GET /whoami` with that key, so a Hub that is not running, is on another port, or rejects the seat leaves you on the card with the Hub's own reason.
 
 ## Embed the Team UI
 
@@ -39,7 +79,7 @@ export function Collaboration() {
 }
 ```
 
-The standalone page can import the user-selected `~/.agora/keys.json` cache and let the user choose the existing seat. Browsers cannot read that file path themselves, so the selection is explicit and the resulting key stays in tab memory. A manually issued seat key is also accepted.
+A browser cannot read `~/.agora/keys.json` on its own, which is why the standalone page asks you to select it explicitly (see [Connect to a Hub](#connect-to-a-hub)). An embedding host supplies the key the same way: in memory, per session.
 
 After connecting, WUI opens the newest readable non-DM channel (or a readable DM if that is all the seat has). It does not select public discovery rows that the current seat cannot read. Each root is a separate thread card. Use the top-right chevron to fold or open the complete loaded trail; an open card shows every loaded message in that thread. Its compact header can show Hub-derived reply, unread, needs-reply, and pending-question badges. The lower-right action rail includes Copy, plus Speak when the host opts in. The composer stays fixed-height with an explicit Attach action beside Send. Selecting an active filter always keeps the matching trail visible. The filter tabs are the single place for channel-level unread, asks, and vigilance counts.
 
