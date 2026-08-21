@@ -52,6 +52,8 @@ In the UI, **Retract** appears on your own messages, and on any message when `me
 
 `owed().charters` is the Hub's list of charters this seat has not read at their current version — hub scope first, then its rooms. The console renders each as a chip in the status strip, and clicking one **reads** the charter, because on Agora Hub the read *is* the receipt: `charter()` (`GET /charter`) for the hub-wide document, and the channel-fs read of `channel/charter.md` for a room's. The console never records a receipt itself and never marks a row read locally. A row carrying `gated: true` is a room that sets `channel:meta.norms_required`, where the Hub is already refusing this seat's posts with a 409 until the read — the chip says so, and a post refused by that gate re-reads `/owed` so the fix appears exactly where the refusal did. `charter()` serves this seat's role-scoped **view**; when the Hub says the text was sliced, the viewer names the sections it was not served and points at the whole document.
 
+`digest(channel).rulings` and `.unacknowledged_rulings` carry a room's standing rulings — operator-authored `ruling:*` store rows, served scoped to the reading seat, that constrain every later decision in that room. The Members drawer renders each with its text, scope, version and acknowledgement state, and `ack_rulings(channel, keys)` (`POST /channels/{channel}/ruling-acks`) records the read. Both arrays are feature-detected on being **present**: a Hub that serves neither renders no rulings surface at all, rather than reporting a room with rulings as a room with none. A room that sets `channel:meta.rulings_required` (readable on `/channels/{c}/info.meta`) is one where the Hub is already refusing this seat's posts with a 409 until each in-scope ruling is acknowledged — the chip says so, and a post refused by that gate re-reads the digest so the fix appears exactly where the refusal did. Acknowledging is delivery, never agreement; the console records the read and leaves disagreement to a message in the room. Hub refusals — a revoked ruling (409), one out of scope (403), one that does not exist (404) — render verbatim.
+
 `owed().phases` and `/channels/{c}/info.phases` carry a room's declared phase order — which version of the work is in force, whether the next may start, and who stewards it. It is advisory by construction (the Hub cannot know what a message works on), so the Members drawer renders it as served, before you post into the room.
 
 `post_message(..., { data })` accepts an opaque JSON object and forwards it unchanged. This covers additive Hub protocol fields such as `evidence` and `consumes`; Agora Hub validates their shape and decides their effect. In the UI, **Hub data** and the completion-metadata field expose this direct relay without creating a WUI-side workflow.
@@ -70,6 +72,8 @@ In the UI, **Retract** appears on your own messages, and on any message when `me
 | Owed work, charter debts, phases | `GET /owed` |
 | Hub charter (reading records the receipt) | `GET /charter` |
 | A room's charter | `GET /channels/{channel}/fs/channel/charter.md` |
+| A room's standing rulings | `GET /channels/{channel}/digest` |
+| Acknowledge standing rulings | `POST /channels/{channel}/ruling-acks` |
 | Hub-wide search | `GET /search` |
 | Retract one message | `POST /channels/{channel}/messages/{id}/retract` |
 | Retract a whole trail | `POST /channels/{channel}/messages/{id}/retract_thread` |
