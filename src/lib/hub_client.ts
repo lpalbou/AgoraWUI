@@ -62,6 +62,27 @@ export type HubCharterDebt = {
   reason?: string;
 };
 
+/** One `channel_digest.rulings` (or `.unacknowledged_rulings`) row, hub
+ *  0113: a STANDING constraint on the room — not one thread's decision but
+ *  a rule every later decision must respect. Operator-authored (`store_set`
+ *  refuses a `ruling:*` write from anyone else) and VERSIONED, so an edit
+ *  re-opens every scoped seat's acknowledgment. `scope` is a list of seat
+ *  ids or `["*"]` for fleet-wide; a row out of this seat's scope is never
+ *  served. `ack_version` rides the UNACKNOWLEDGED rows only: the version
+ *  this seat last acked, or null when it never has. */
+export type HubRulingRow = {
+  key: string;
+  value: {
+    text?: string;
+    scope?: string[];
+    source_message_id?: string;
+    active?: boolean;
+  };
+  version: number;
+  updated_by?: string;
+  ack_version?: number | null;
+};
+
 /** One `/owed.phases` or `/channels/{c}/info.phases` row (hub 0140/2): a
  *  channel's declared phase order — which version of the work is in force
  *  and whether the next may start. Advisory by construction: the hub cannot
@@ -535,9 +556,37 @@ export class HubClient {
     return (await this._fetch("hub_channel_info", `/channels/${encodeURIComponent(channel)}/info`)) as HubChannelInfo;
   }
 
-  /** Actionable-state digest: open questions + decided counts (badges). */
-  async digest(channel: string): Promise<any> {
+  /** Actionable-state digest: open questions + decided counts (badges),
+   *  and the room's STANDING RULINGS (hub 0113). `rulings` is every active
+   *  row in this seat's scope; `unacknowledged_rulings` is the subset whose
+   *  store version is newer than this seat's receipt. In a room that sets
+   *  `channel:meta.rulings_required` that second list is not advisory — the
+   *  hub is ALREADY refusing this seat's posts with a 409 until each one is
+   *  acked, exactly as `norms_required` gates on the charter. Older hubs
+   *  omit both; the caller feature-detects on the arrays being present. */
+  async digest(channel: string): Promise<{
+    rulings?: HubRulingRow[];
+    unacknowledged_rulings?: HubRulingRow[];
+    counts?: Record<string, number>;
+    [k: string]: any;
+  }> {
     return await this._fetch("hub_digest", `/channels/${encodeURIComponent(channel)}/digest`);
+  }
+
+  /** Record that this seat has read the named standing rulings (hub 0113,
+   *  `POST /channels/{c}/ruling-acks`). This is the call that clears the
+   *  `rulings_required` posting gate — and, like `ack_rulings` everywhere
+   *  else, it is DELIVERY, never agreement: the console records the read and
+   *  leaves disagreeing to a message in the room. Keys come from the
+   *  digest's `unacknowledged_rulings` and must be `ruling:<slug>`; the hub
+   *  refuses a revoked row (409), one out of scope (403), and one that does
+   *  not exist (404) — refusals render verbatim, the console never
+   *  pre-judges them. 404 on pre-0113 hubs. */
+  async ack_rulings(channel: string, keys: string[]): Promise<{ channel?: string; agent_id?: string; acked?: string[] }> {
+    return await this._fetch("hub_ack_rulings", `/channels/${encodeURIComponent(channel)}/ruling-acks`, {
+      method: "POST",
+      body: JSON.stringify({ keys }),
+    });
   }
 
   /** Channel vfs — table of contents (metadata only, no

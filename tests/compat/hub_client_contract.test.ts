@@ -125,6 +125,42 @@ describe("native Agora Hub transport", () => {
     });
   });
 
+  it("acknowledges standing rulings on the hub's ruling-acks route", async () => {
+    // Hub 0113: the ONE call that clears a `rulings_required` room's 409.
+    // Keys come from the digest's `unacknowledged_rulings`; the console
+    // sends them verbatim and never filters the hub's refusals.
+    let seen: { url: string; method: string; body: any } | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen = { url: String(input), method: String(init?.method || "GET"), body: JSON.parse(String(init?.body || "{}")) };
+      return new Response(JSON.stringify({ channel: "team alpha", agent_id: "wui-seat", acked: ["ruling:no-external-assets"] }), { status: 200 });
+    }));
+    const hub = new HubClient({ base_url: "http://127.0.0.1:8765", bearer_token: "existing-key" });
+    await expect(hub.ack_rulings("team alpha", ["ruling:no-external-assets"])).resolves.toMatchObject({
+      acked: ["ruling:no-external-assets"],
+    });
+    expect(seen!).toEqual({
+      url: "http://127.0.0.1:8765/channels/team%20alpha/ruling-acks",
+      method: "POST",
+      body: { keys: ["ruling:no-external-assets"] },
+    });
+  });
+
+  it("carries the digest's standing rulings through to the caller", async () => {
+    // The gate is only actionable if the rows survive the client: `rulings`
+    // (active, in scope) and `unacknowledged_rulings` (the gating subset,
+    // each with the version this seat last acked).
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      channel: "commons",
+      rulings: [{ key: "ruling:no-external-assets", value: { text: "no external assets", scope: ["*"], source_message_id: "01ABC", active: true }, version: 2, updated_by: "laurent" }],
+      unacknowledged_rulings: [{ key: "ruling:no-external-assets", value: { text: "no external assets", scope: ["*"] }, version: 2, ack_version: 1 }],
+      counts: { unacknowledged_rulings: 1, rulings: 1 },
+    }), { status: 200 })));
+    const digest = await new HubClient({ base_url: "http://127.0.0.1:8765", bearer_token: "existing-key" }).digest("commons");
+    expect(digest.rulings?.[0]?.value?.text).toBe("no external assets");
+    expect(digest.unacknowledged_rulings?.[0]).toMatchObject({ key: "ruling:no-external-assets", version: 2, ack_version: 1 });
+    expect(digest.counts?.unacknowledged_rulings).toBe(1);
+  });
+
   it("fetches attachment bytes through the authenticated Hub client", async () => {
     let seen_init: RequestInit | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
