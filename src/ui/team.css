@@ -1604,17 +1604,62 @@
 /* A thread is a first-class, independently scannable collaboration unit.
    The card deliberately does not clip overflow: each message owns a
    hover/focus action dock that must remain reachable beyond its text. */
+/* A MESSAGE BOUNDARY MUST OUTRANK ANYTHING DRAWN INSIDE A MESSAGE
+ * (operator dm 14: "accentuate the separation and border of messages, so
+ * it's clear where is the previous and new message").
+ *
+ * The ranking was inverted, which is why this read as mush. A `---` inside
+ * one author's markdown rendered at the browser default — a full-width solid
+ * rule — while the boundary BETWEEN two authors was a 1px `--bg-tertiary`
+ * line at 10px margin, and between two replies it was a 2px gap and nothing
+ * else. The strongest horizontal line on screen was intra-message; the
+ * weakest was where the author changed.
+ *
+ * Fixed by ordering rather than by adding weight everywhere: card boundary >
+ * reply boundary > in-body rule. Each step below is the next one down. */
 .team_thread_group {
-  margin: 10px 0;
-  border: 1px solid var(--bg-tertiary);
+  margin: 16px 0;
+  border: 1px solid var(--ui-border-2, rgba(255, 255, 255, 0.16));
   border-radius: 12px;
   padding: 8px;
   background: color-mix(in srgb, var(--bg-secondary) 60%, transparent);
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.22);
 }
 
 .team_thread_group_folded {
   background: color-mix(in srgb, var(--bg-secondary) 42%, transparent);
+}
+
+/* A FOLDED CARD SHOWS AT MOST FOUR LINES OF THE ROOT (operator dm 6).
+ *
+ * Folding hid the replies and left the original message at full length, so a
+ * long root still cost as much scroll folded as unfolded — which is most of
+ * the reason to fold. Four lines is laurent's number: enough to recognise
+ * the thread, not enough to bury the next card.
+ *
+ * Scoped `> .team_row` so it reaches the ROOT only. The replies are already
+ * hidden when folded, and clamping them here would silently truncate them on
+ * unfold, which is the opposite of what unfolding means.
+ *
+ * ALSO SCOPED `.has_replies`, AND THAT HALF IS LOAD-BEARING (operator dm 11).
+ * `folded` is computed for every card — `filter === "all" && !open` — with no
+ * reference to reply count, so `.team_thread_group_folded` lands on reply-less
+ * cards too, while the fold control is built only when `n > 0`. Keyed on the
+ * folded class alone, this rule clamped a lone long message to four lines with
+ * nothing anywhere able to lift it: not a control that was hard to hit, but
+ * text that could not be reached at all. Clamp only where something can
+ * unclamp. The sibling tint above deliberately stays unscoped — a lone card
+ * and a folded thread should read alike in the feed.
+ *
+ * -webkit-line-clamp is the interoperable spelling — it is implemented in
+ * every current engine including Firefox, and `line-clamp` is not yet. Both
+ * are set so this does not rot when it is. */
+.team_thread_group_folded.has_replies > .team_row .team_row_body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
 }
 
 /* Trail marker in the card's header, at its trailing edge: reply-scoped
@@ -1627,10 +1672,33 @@
   flex: 0 0 auto;
 }
 
-/* The header line is a convenience click target for folding; the button
-   inside it remains the accessible control. */
+/* THE FOLD HEADER (operator dm 6). Not a convenience target any more — a
+   bar you can see, with the whole bar as the control. The button inside it
+   remains the accessible control for keyboard use.
+
+   It also had to become a bar to fix a real blocker: `.team_row_rail` is an
+   absolutely-positioned hover dock at `bottom: 5px; right: 6px`, and on a
+   short card — which is exactly what a FOLDED root row is — the card's
+   bottom-right IS the header's trailing edge, where the fold icons live.
+   Since you must hover to click, the rail was guaranteed to be painted over
+   the fold control at the moment of every click. Giving the header its own
+   band, and reserving a strip for the rail below (see .team_row.has_actions
+   further down), separates them instead of stacking them. */
 .team_row_head.foldable {
   cursor: pointer;
+  padding: 4px 8px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-tertiary) 34%, transparent);
+  /* Above the rail so a click on the bar is a fold, never a stray action —
+     the rail keeps its own uncovered strip, so nothing of it is lost. */
+  position: relative;
+  z-index: 3;
+}
+
+.team_row_head.foldable:hover {
+  background: color-mix(in srgb, var(--accent, #79c7ff) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #79c7ff) 38%, var(--bg-tertiary));
 }
 
 .team_reply_toggle {
@@ -1775,6 +1843,40 @@
 
 .team_row:hover {
   background: var(--ui-overlay-bg-hover, rgba(255, 255, 255, 0.03));
+}
+
+/* RESERVE A STRIP FOR THE HOVER RAIL (operator dm 6).
+ *
+ * MEASURED, not estimated — the first version of this comment said "about
+ * 26px" and "the bottom ~31px", which is the button height mistaken for the
+ * dock's. Read off the rules: `.team_row_rail .btn { height: 26px }` + 2px
+ * rail padding + 1px border = a 32px dock, at `bottom: 5px`, so it claims
+ * the bottom **37px** of whatever card it is on.
+ *
+ * On a tall card that lands over body text, which is the intended hover-dock
+ * behaviour. On a SHORT card — a folded root row — the bottom 37px and the
+ * header line are the same pixels, so the rail covered the fold control and
+ * the thread could not be unfolded at all.
+ *
+ * A min-height keeps the two bands disjoint instead of stacking them. Chosen
+ * over z-index alone, which would have fixed the fold click by making the
+ * rail's own buttons unclickable underneath it — trading one dead control
+ * for another. The rail keeps every pixel it had; it just cannot sit on the
+ * header any more.
+ *
+ * Only where the rail actually floats: the coarse-pointer block below turns
+ * it into a static footer, which needs no reserved band.
+ *
+ * The arithmetic, so the next person can check it rather than trust it:
+ * row padding-top 3 + header bar ~30 (20px line + 8 padding + 2 border) = the
+ * header ends by y=33; the rail begins at row_height − 37. Disjoint needs
+ * row_height ≥ 70. 78 is that plus a real margin, because the header's line
+ * box grows with the reader's root font size and 2px of clearance is not
+ * clearance. */
+@media not (pointer: coarse) {
+  .team_row.has_actions:has(> .team_row_main > .team_row_head.foldable) {
+    min-height: 78px;
+  }
 }
 
 .team_avatar {
@@ -2113,6 +2215,18 @@
   max-width: 90ch;
 }
 
+/* THE BOTTOM OF THE RANKING (operator dm 14). A `---` an author typed was
+   the loudest horizontal line in the channel — unstyled, so it rendered at
+   the browser default while the boundary between two authors was a 1px tint.
+   Anyone scanning for "where does this message end" found the wrong line.
+   Quieter than a reply divider, which is quieter than a card edge. */
+.team_row_body hr {
+  border: 0;
+  border-top: 1px solid var(--bg-tertiary);
+  opacity: 0.55;
+  margin: 10px 0;
+}
+
 /* Markdown inside rows: kill the default outer margins so rows stay tight. */
 .team_row_body > * :first-child,
 .team_row_body > :first-child {
@@ -2233,6 +2347,107 @@
   color: var(--text-primary);
 }
 
+/* Citation chips (operator dm 21/22): `#412` / `commons#412` in a message
+   body. Deliberately NOT code-shaped — a citation is a reference, and the
+   monospace treatment would make every one of them read as a literal. */
+.md_cite {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1px solid var(--border, #2b3140);
+  border-radius: 5px;
+  background: var(--bg-tertiary, #1b2030);
+  color: var(--accent, #7aa2f7);
+  /* Hover previews, click opens (operator dm 34) — so it is a pointer,
+     not a help cursor. */
+  cursor: pointer;
+  font-size: 0.94em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.md_cite:hover,
+.md_cite:focus-visible {
+  border-color: var(--accent, #7aa2f7);
+  outline: none;
+}
+
+/* The preview itself. `position: fixed` because the feed is a scroll
+   container and an absolutely-positioned card would be clipped by it; the
+   inline style supplies the anchor, this rule supplies the box. */
+.team_cite_card {
+  position: fixed;
+  z-index: 60;
+  /* 686 = 572 + 20% (operator dm 49; 572 was itself 440 + 30% at dm 34).
+     team_page.tsx mirrors this as 706 (= 686 + 20 margin) for the
+     right-edge clamp; the two move together. */
+  width: min(686px, calc(100vw - 24px));
+  /* Raised with the markdown body (dm 49): headings, lists and tables are
+     taller than the plain-text wall they replace, and 320 turned most cards
+     into a scroll stub. `max-height` still caps it — the card scrolls. The
+     flip threshold in team_page.tsx mirrors this as 420 (= 400 + 20). */
+  max-height: 400px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #2b3140);
+  border-radius: 8px;
+  background: var(--bg-secondary, #141824);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+}
+
+.team_cite_head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.team_cite_ref {
+  color: var(--accent, #7aa2f7);
+  font-weight: 600;
+}
+
+.team_cite_sender {
+  color: var(--text-secondary);
+}
+
+.team_cite_status {
+  color: var(--text-muted);
+}
+
+.team_cite_open {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.team_cite_title {
+  margin-bottom: 4px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* The preview body renders MARKDOWN through the shared `md_doc` host
+   (operator dm 49: "should render markdown the same way we see the messages
+   on the channel"), so it inherits the feed's whole type scale rather than
+   redeclaring one. `white-space: pre-wrap` is gone with the plain-text
+   slice — it belonged to a <div> holding a raw string, and left on a
+   markdown host it doubles every blank line the parser has already turned
+   into a paragraph. */
+.team_cite_body {
+  color: var(--text-secondary);
+}
+
+/* A card is a glance: the first block must not open with the feed's
+   18px heading gap, or the preview starts below the fold of its own box. */
+.team_cite_body .md_doc > :first-child {
+  margin-top: 0;
+}
+
+.team_cite_note {
+  font-size: 12px;
+}
+
 /* Data tables in agent reports are evidence, not decoration: they need
    real column separation and a scroll lane of their own. The renderer
    wraps every table in .md_table_wrap so a wide table scrolls itself and
@@ -2343,12 +2558,26 @@
 
 /* Reply rail: replies indent under the root with a connector line. */
 .team_replies {
-  margin: 2px 0 0 15px;
+  /* Separated from the ROOT it answers, not just indented under it. */
+  margin: 8px 0 0 15px;
   padding-left: 12px;
   border-left: 2px solid var(--bg-tertiary);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  /* gap:2px was the ENTIRE boundary between two replies — see the ranking
+     note on .team_thread_group. The rule below carries it now; a gap as well
+     would double-space every trail for no added legibility. */
+  gap: 0;
+}
+
+/* Second and subsequent replies get a real line. Not the first: it already
+   has the root above it and the `.team_replies` left rail starting beside
+   it, and a rule there reads as a header underline rather than a divider
+   (operator dm 14). */
+.team_replies > .team_row + .team_row {
+  border-top: 1px solid var(--bg-tertiary);
+  margin-top: 7px;
+  padding-top: 9px;
 }
 
 .team_thread_tools {
@@ -2529,6 +2758,12 @@
 .team_new_channel input:not([type]) {
   flex: 1 1 120px;
   min-width: 0;
+}
+
+/* The join form carries a token, which is long: it gets its own row rather
+   than squeezing the channel name to nothing. */
+.team_join_channel input:not([type]) {
+  flex: 1 1 100%;
 }
 
 .team_new_channel label {
@@ -5402,4 +5637,35 @@ a.team_attach_dl:hover {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   cursor: pointer;
+}
+
+/* WHO AN ASK IS FOR (operator commons#75). The recipient was nowhere on
+   screen, so a seat could tick "answer ask 1" for an ask pinned to somebody
+   else and learn about it only from the hub's refusal after posting. */
+.team_ask_to {
+  font-weight: 600;
+  color: var(--accent, #79c7ff);
+  opacity: 0.9;
+}
+
+/* An ask that names someone else is still worth reading — it is how you know
+   what the room is waiting on — so it is dimmed, never hidden. */
+.team_ask.team_ask_other {
+  opacity: 0.72;
+}
+
+.team_ask.team_ask_other .team_ask_to {
+  color: var(--text-muted);
+}
+
+/* A tickbox the hub would refuse. Left visible and disabled rather than
+   removed: seeing "ask 2 → agora, greyed" tells you why you cannot answer
+   it, where an absent row would just look like the ask was gone. */
+.team_reply_ask_not_mine {
+  opacity: 0.6;
+}
+
+.team_reply_ask_not_mine input,
+.team_reply_ask_not_mine .team_reply_ask_text {
+  cursor: not-allowed;
 }

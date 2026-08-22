@@ -25,5 +25,8 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+    // jsdom substitutes its own TextEncoder and a subtle-less `crypto`; this
+    // puts the Node realm's back. See the file for what breaks without it.
+    setupFiles: ["tests/setup/jsdom_globals.ts"],
   },
 });

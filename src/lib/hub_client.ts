@@ -231,10 +231,23 @@ export type HubMessage = {
   data?: HubMessageData | null;
   reply_to?: string | null;
   created_at?: number;
-  /** Feature-detected (hub ≥ 0.9 wire contract): true when an open/blocked
-   *  message already received a resolving reply — render, never compute.
+  /** Feature-detected (hub ≥ 0.9 wire contract): a resolving reply EXISTS
+   *  downthread. NOT the closure verdict — a bystander's `resolved` sets
+   *  this and closes nothing (agora ADR-0003, stated at agora-and-wui#11).
+   *  Use `closed` for "is this thread settled?"; this remains only as the
+   *  fallback for a hub that does not serve `closed`.
    *  null = no statement (retracted rows skip discharge computation). */
   has_resolved_reply?: boolean | null;
+  /** THE closure verdict (hub ≥ 0.17.8, agora-and-wui#11): the hub's own
+   *  `_discharge` computation, the same one every other surface consults —
+   *  authority-aware, so a bystander's `resolved` does not set it.
+   *  null = no statement (a retracted row, or a hub older than the field);
+   *  never read null as "open". */
+  closed?: boolean | null;
+  /** WHO closed it, when an authoritative `resolved` reply did. `closed_by`
+   *  null while `closed` is true is a real state, not a gap: the thread was
+   *  answered in full rather than ruled shut by one seat. */
+  closed_by?: string | null;
   /** Ask ids on this message still awaiting an answer (hub-computed
    *  discharge state; null = no statement). A discharging reply cites these
    *  in answers=[...] (or declines=[...]) so the obligation clears
@@ -831,6 +844,17 @@ export class HubClient {
     return await this._fetch("hub_create_channel", "/channels", {
       method: "POST",
       body: JSON.stringify({ name, private: is_private }),
+    });
+  }
+
+  /** Redeem an invite, or walk into a public room. The hub decides both: a
+   *  private channel needs a token minted for this seat, an archived or
+   *  blocked one refuses whatever the token says, and the token is spent on
+   *  success. `invite_token` is omitted for a public channel. */
+  async join_channel(channel: string, invite_token?: string): Promise<any> {
+    return await this._fetch("hub_join_channel", `/channels/${encodeURIComponent(channel)}/join`, {
+      method: "POST",
+      body: JSON.stringify(invite_token ? { invite_token } : {}),
     });
   }
 

@@ -57,6 +57,18 @@ type StubOpts = {
   /** Status + body for POST /channels/{c}/messages, so the charter gate's
    *  409 refusal can be exercised. */
   post_refusal?: { status: number; detail: string };
+  /** `GET /presence` — the hub-wide roster behind the invite picker. A
+   *  FUNCTION so a test can change what the hub returns between calls: the
+   *  whole question about this roster is whether the client refetches it,
+   *  and a fixed array cannot tell a refetch from a cache. */
+  presence?: any[] | (() => any[]);
+  /** `GET /channels/{c}/members` — array, or a function so a test can vary
+   *  the answer between calls. Returning a PROMISE lets a test hold the
+   *  response open and inspect the UI while the refetch is in flight, which
+   *  is the only window in which a refresh-blanks-the-list defect is
+   *  visible: with an instantly-resolving stub the fresh data lands inside
+   *  the same act() flush and paints over the gap. */
+  members_fn?: () => any[] | Promise<any[]>;
 };
 
 function stub_hub(opts: StubOpts = {}): ReturnType<typeof vi.fn> {
@@ -102,7 +114,8 @@ function stub_hub(opts: StubOpts = {}): ReturnType<typeof vi.fn> {
       );
     }
     if (url.includes("/channels") && url.includes("/members")) {
-      return new Response(JSON.stringify(opts.members ?? []), { status: 200 });
+      const rows = opts.members_fn ? await opts.members_fn() : (opts.members ?? []);
+      return new Response(JSON.stringify(rows), { status: 200 });
     }
     if (url.includes("/blocks")) {
       return new Response(JSON.stringify(opts.blocks ?? []), { status: 200 });
@@ -138,6 +151,10 @@ function stub_hub(opts: StubOpts = {}): ReturnType<typeof vi.fn> {
         return new Response(JSON.stringify({ deleted: true }), { status: 200 });
       }
       return new Response(JSON.stringify({ path: "plans/x.md", content: "# Plan\n\nhello **world**", mime: "text/markdown", version: 2, updated_by: "flow", updated_at: 1 }), { status: 200 });
+    }
+    if (url.endsWith("/presence")) {
+      const rows = typeof opts.presence === "function" ? opts.presence() : (opts.presence ?? []);
+      return new Response(JSON.stringify(rows), { status: 200 });
     }
     if (url.endsWith("/channels")) {
       return new Response(JSON.stringify(opts.channels ?? [{ name: "commons", private: false, member: true, member_count: 14, last_seq: 10, last_at: Date.now() / 1000 }]), { status: 200 });
@@ -569,7 +586,7 @@ describe("TeamPage trust affordances", () => {
     });
     render_page();
     await screen.findByText("with field");
-    expect(screen.getAllByText("answered")).toHaveLength(1);
+    expect(screen.getAllByText("resolved")).toHaveLength(1); // operator dm#30: the word is "resolved"
   });
 
   it("vfs delete: the trash arms an IN-APP confirm naming the agent risk; confirm sends the CAS DELETE (operator ask 2026-08-19)", async () => {
@@ -627,6 +644,401 @@ describe("TeamPage trust affordances", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open channel members drawer" }));
     await screen.findByText("cross-package commons");
     expect(info_calls()).toBe(2);
+  });
+
+  it("invite picker refetches the roster on drawer open, so an agent that registered after page load is invitable without a reload (operator dm 3)", async () => {
+    // laurent spawned an agent, saw the hub's "joined" notice in #commons,
+    // and could not invite it: the roster behind this picker was fetched
+    // once at boot and never again, so only F5 could surface the newcomer.
+    let hub_roster = [{ agent_id: "alpha" }, { agent_id: "laurent" }];
+    const fetch_mock = stub_hub({
+      members: [{ agent_id: "laurent", role: "owner" }],
+      presence: () => hub_roster,
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+
+    const invite_options = async (): Promise<string[]> => {
+      const select = await screen.findByTitle("Agents on the hub not yet in this channel");
+      return [...select.querySelectorAll("option")].map((o) => o.textContent || "");
+    };
+
+    fireEvent.click(screen.getByRole("button", { name: "Open channel members drawer" }));
+    expect(await invite_options()).toContain("alpha");
+    expect(await invite_options()).not.toContain("newcomer");
+
+    // The agent registers while the page stays open — exactly laurent's case.
+    hub_roster = [...hub_roster, { agent_id: "newcomer" }];
+
+    // Reopening the drawer must go back to the hub. Assert the REFETCH, not
+    // just the rendered list: a stale list and a list that happens to be
+    // right are indistinguishable from the DOM alone.
+    const presence_calls = () => fetch_mock.mock.calls.filter((c) => String(c[0]).endsWith("/presence")).length;
+    const before = presence_calls();
+    fireEvent.click(screen.getByRole("button", { name: "Open channel members drawer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open channel members drawer" }));
+    await waitFor(() => expect(presence_calls()).toBeGreaterThan(before));
+    await waitFor(async () => expect(await invite_options()).toContain("newcomer"));
+
+    // The signed-in seat is never its own invite candidate.
+    expect(await invite_options()).not.toContain("laurent");
+  });
+
+  it("opening the invite dropdown itself refetches the roster, for a drawer left open (operator dm 3)", async () => {
+    // The tab-open refresh is not enough on its own: a drawer sitting open
+    // across the minutes a spawned agent takes to register would still be
+    // stale at the moment of the click.
+    let hub_roster = [{ agent_id: "alpha" }];
+    const fetch_mock = stub_hub({ members: [{ agent_id: "laurent", role: "owner" }], presence: () => hub_roster });
+    render_page();
+    await screen.findAllByText("#commons");
+    fireEvent.click(screen.getByRole("button", { name: "Open channel members drawer" }));
+
+    const select = await screen.findByTitle("Agents on the hub not yet in this channel");
+    hub_roster = [...hub_roster, { agent_id: "latecomer" }];
+    const before = fetch_mock.mock.calls.filter((c) => String(c[0]).endsWith("/presence")).length;
+
+    fireEvent.focus(select);
+
+    await waitFor(() => expect(fetch_mock.mock.calls.filter((c) => String(c[0]).endsWith("/presence")).length).toBeGreaterThan(before));
+    await waitFor(() => expect([...select.querySelectorAll("option")].map((o) => o.textContent)).toContain("latecomer"));
+  });
+
+  it("opening the delegate dropdown refetches WITHOUT blanking the list under the cursor (operator dm 3)", async () => {
+    // The refresh-on-open fix has a failure mode of its own, and it is worse
+    // than the staleness it replaces: load_info() opens by clearing members
+    // and setting info to "loading", so a refresh fired from onFocus empties
+    // the very list the user just clicked into. The options come back a tick
+    // later — after the native select has already painted.
+    //
+    // Stale-but-populated degrades gracefully; empty-at-the-moment-of-use
+    // does not. Assert the list SURVIVES its own refresh.
+    const rows = [{ agent_id: "framework" }, { agent_id: "runtime" }, { agent_id: "laurent", role: "owner" }];
+    // The gate: after the first (boot) fetch, every later /members call hangs
+    // until the test releases it. That models the round trip a real hub takes
+    // and holds open the window the user actually sees.
+    // A box, not a bare `let`: assigned inside the promise executor, which
+    // TS's control flow does not follow — a plain binding narrows to `never`
+    // at the call site below.
+    const gate: { release: (() => void) | null } = { release: null };
+    let calls = 0;
+    stub_hub({
+      members_fn: () => {
+        calls += 1;
+        if (calls === 1) return rows;
+        return new Promise<any[]>((resolve) => {
+          gate.release = () => resolve(rows);
+        });
+      },
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+    fireEvent.click(screen.getByRole("button", { name: "Open channel members drawer" }));
+    await screen.findByText("Hub delegation");
+
+    // Re-queried from the document every time, never held as a reference: if
+    // the drawer swaps in a loading state the old <select> is DETACHED but
+    // still carries its options, so a captured node reports the list as
+    // present when the user can no longer see it. That false pass is the
+    // first version of this test.
+    const names = (): string[] => {
+      const live = document.querySelector<HTMLSelectElement>("select[title^='Assign a delegate']");
+      if (!live) return [];
+      return [...live.querySelectorAll("option")].map((o) => o.textContent || "").filter(Boolean);
+    };
+    await waitFor(() => expect(names()).toContain("framework"));
+    const before = calls;
+
+    fireEvent.focus(await screen.findByTitle(/^Assign a delegate/));
+    await waitFor(() => expect(calls).toBeGreaterThan(before)); // the refetch is in flight and PINNED there
+
+    // THE ASSERTION. The user is looking at an open dropdown and the refresh
+    // has not come back. Stale-but-populated degrades gracefully; empty does
+    // not — a native select paints its options at click time.
+    expect(names()).toContain("framework");
+    expect(names()).toContain("runtime");
+
+    gate.release?.();
+    await waitFor(() => expect(names()).toContain("framework"));
+  });
+
+  it("an ask names its recipient, and a reply cannot tick one that is not this seat's (operator commons#75)", async () => {
+    // laurent hit "you may not discharge ask ids not addressed to you" on a
+    // reply he had not finished writing. Three things combined:
+    //   - commons#70 was addressed to laurent AND agora at the MESSAGE level,
+    //   - ask 1 inside it was pinned to agora ALONE,
+    //   - and start_reply auto-ticked the single ask without asking whose.
+    // The recipient appeared nowhere on screen, so nothing he could read
+    // would have prevented it. Assert both halves: the seat is shown, and
+    // the box for someone else's ask cannot be ticked.
+    stub_hub({
+      messages: [
+        {
+          id: "m-ask",
+          channel: "commons",
+          seq: 70,
+          sender: "agora-wui",
+          body: "who owns the surface",
+          created_at: 1,
+          to: ["laurent", "agora"],
+          pending_asks: ["1"],
+          data: { asks: [{ id: "1", text: "Is this intended?", to: ["agora"] }] },
+        },
+      ],
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+
+    // The chip carries the seat, on the row, before any click.
+    await waitFor(() => expect(document.body.textContent).toContain("→ agora"));
+
+    // Open the reply composer on that message.
+    fireEvent.click(await screen.findByTitle(/^Reply/));
+
+    const box = await waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLInputElement>("input[type=checkbox]")].find((n) =>
+        (n.closest("label")?.textContent || "").startsWith("ask 1")
+      );
+      if (!found) throw new Error("no ask-1 checkbox");
+      return found;
+    });
+
+    // THE POINT. Not this seat's ask: refused before the hub ever sees it.
+    expect(box.disabled).toBe(true);
+    expect(box.checked).toBe(false);
+    // And clicking it does not sneak past the disabled attribute.
+    fireEvent.click(box);
+    expect(box.checked).toBe(false);
+  });
+
+  it("an ask that names no seat never claims to be answerable — the label states addressing, the hub states permission (operator dm#28)", async () => {
+    // laurent: "it says 'ask anyone' and yet i can't answer that second ask."
+    // Both halves were on screen at once because they read DIFFERENT sources:
+    // the label from the ask payload's `to`, the enablement from the hub's
+    // `asks_naming_you`. An empty `to` is a fact about who the ask NAMES; it
+    // does not mean anyone may discharge it — the hub still refuses the asker
+    // and anyone its served subset excludes.
+    //
+    // This is the same two-sources-one-question defect the commons#75 fix was
+    // written to remove, reintroduced one line below it. So the guard is that
+    // the label must never make a permission claim.
+    stub_hub({
+      owed: {
+        to_answer: [
+          // The hub serves a row for this message and says NO ask here is
+          // this seat's — an empty subset is authoritative, not "unknown".
+          { channel: "commons", seq: 90, asks_naming_you: [] },
+        ],
+        to_consume: [],
+        waiting_on: [],
+        counts: { to_answer: 1, to_consume: 0 },
+      },
+      messages: [
+        {
+          id: "m-unassigned",
+          channel: "commons",
+          seq: 90,
+          sender: "webos",
+          body: "two asks, neither pinned",
+          created_at: 1,
+          to: ["laurent"],
+          pending_asks: ["1", "2"],
+          data: {
+            asks: [
+              { id: "1", text: "first, pinned to nobody" },
+              { id: "2", text: "second, pinned to nobody" },
+            ],
+          },
+        },
+      ],
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+
+    // THE CONTRADICTION. The word "anyone" is a permission claim and must not
+    // appear for an ask the hub has excluded this seat from.
+    await waitFor(() => expect(document.body.textContent).toContain("→ unassigned"));
+    expect(document.body.textContent).not.toContain("→ anyone");
+
+    // And the two statements agree: nothing on screen offers to answer it.
+    fireEvent.click(await screen.findByTitle(/^Reply/));
+    const boxes = await waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLInputElement>("input[type=checkbox]")].filter((n) =>
+        (n.closest("label")?.textContent || "").startsWith("ask ")
+      );
+      if (found.length < 2) throw new Error("expected both ask checkboxes");
+      return found;
+    });
+    for (const box of boxes) expect(box.disabled).toBe(true);
+  });
+
+  it("Resolve is not offered on a thread the hub already reports resolved, and there is no reopen (operator dm#30/#42)", async () => {
+    // A root keeps its POSTED status word forever — `open` is what the sender
+    // chose, not the thread's state — so gating the button on the word alone
+    // kept offering Resolve on a closed thread. Resolving twice posts a second
+    // resolved reply and reads as the console not knowing what it already did.
+    //
+    // laurent scoped the remedy at dm#42: no reopen affordance either. So the
+    // assertion is that the control is simply absent, not swapped for another.
+    stub_hub({
+      whoami: { id: "laurent" },
+      messages: [
+        {
+          id: "m-open",
+          channel: "commons",
+          seq: 60,
+          sender: "laurent",
+          body: "still open",
+          status: "open",
+          created_at: 1,
+          has_resolved_reply: false,
+        },
+        {
+          id: "m-done",
+          channel: "commons",
+          seq: 61,
+          sender: "laurent",
+          body: "already closed",
+          status: "open",
+          created_at: 2,
+          has_resolved_reply: true,
+        },
+      ],
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+    await screen.findByText("already closed");
+
+    // Anchored, not /Resolve/i: the toolbar carries a "Resolved N" FILTER
+    // chip that a loose pattern matches, which made the first version of this
+    // test fail against correct code. Match the act, not the word.
+    const resolve_buttons = () => screen.queryAllByRole("button", { name: "\u2713 Resolve" });
+
+    // Exactly one Resolve on screen: the open thread's. The resolved one has
+    // none — and no "Unresolved"/reopen control in its place.
+    await waitFor(() => expect(resolve_buttons()).toHaveLength(1));
+    expect(screen.queryByRole("button", { name: /unresolve|reopen/i })).toBeNull();
+
+    // And the resolved thread wears the operator's word.
+    expect(screen.getAllByText("resolved").length).toBeGreaterThan(0);
+  });
+
+  it("a BYSTANDER's resolved reply does not take Resolve away from the seat whose thread it is (agora-and-wui#11)", async () => {
+    // The test above gates on `has_resolved_reply`, and that field does not
+    // mean what the gate needed. It says a resolving reply EXISTS downthread
+    // — which a bystander sets without closing anything (ADR-0003). So the
+    // console hid Resolve from the one seat entitled to close the thread,
+    // because someone else had replied `resolved` to it.
+    //
+    // The hub's `closed` is the authority-aware verdict and is now the
+    // source. Both rows below carry has_resolved_reply: true, so nothing here
+    // can pass by reading the old field: they differ ONLY in the verdict.
+    stub_hub({
+      whoami: { id: "laurent" },
+      messages: [
+        {
+          id: "m-bystander",
+          channel: "commons",
+          seq: 70,
+          sender: "laurent",
+          body: "a bystander replied resolved",
+          status: "open",
+          created_at: 1,
+          has_resolved_reply: true,
+          closed: false,
+        },
+        {
+          id: "m-really-closed",
+          channel: "commons",
+          seq: 71,
+          sender: "laurent",
+          body: "the hub says this one is closed",
+          status: "open",
+          created_at: 2,
+          has_resolved_reply: true,
+          closed: true,
+        },
+      ],
+    });
+    render_page();
+    await screen.findAllByText("#commons");
+    await screen.findByText("a bystander replied resolved");
+
+    const resolve_buttons = () => screen.queryAllByRole("button", { name: "✓ Resolve" });
+
+    // Exactly one: the thread the hub has NOT closed still offers it. Before
+    // the fix this was zero — both rows were read as settled.
+    await waitFor(() => expect(resolve_buttons()).toHaveLength(1));
+  });
+
+  it("a thread closing on the hub reaches the screen on the next poll, without a reload", async () => {
+    // The background merge re-serves the tail and keeps the OLD row object
+    // when it decides nothing changed — that identity preservation is what
+    // stops the feed re-rendering on every poll. It compares a named list of
+    // live decorations, so a decoration missing from that list is invisible
+    // until a reload.
+    //
+    // `closed` had to join that list. Without this test the comparison is
+    // unfalsifiable decoration: removing it leaves the whole suite green
+    // (measured — it survived the sweep before this test existed).
+    const rows: any[] = [
+      {
+        id: "m-closing",
+        channel: "commons",
+        // Must sit AT OR BELOW the stub channel's last_seq (10). Above it,
+        // the poll's seq-regression probe concludes the hub's seqs went
+        // backwards and REPLACES the whole window — which delivers the new
+        // row by a different route and made this test pass with the merge
+        // comparison deleted. Measured, not reasoned: the mutation survived.
+        seq: 8,
+        sender: "laurent",
+        body: "about to be closed",
+        status: "open",
+        created_at: 1,
+        has_resolved_reply: false,
+        closed: false,
+      },
+    ];
+    stub_hub({ whoami: { id: "laurent" }, messages: rows });
+
+    // Fake timers BEFORE the render. The background poll's interval is
+    // created during mount, and an interval created under real timers is
+    // never advanced by fake ones — the first version of this test installed
+    // them afterwards and silently exercised no poll at all (one message
+    // fetch, measured). A test that cannot reach the code it names is worse
+    // than no test.
+    vi.useFakeTimers();
+    try {
+      render_page();
+      // Synchronous queries only from here: findBy*/waitFor drive their own
+      // real-time clock and simply hang once timers are faked. Boot settles
+      // by advancing the fake clock instead — well short of the 5s poll, so
+      // the "before" assertion below cannot be the poll's doing.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(screen.getByText("about to be closed")).toBeTruthy();
+
+      const resolve_buttons = () => screen.queryAllByRole("button", { name: "✓ Resolve" });
+      expect(resolve_buttons()).toHaveLength(1);
+
+      // The hub closes it. Only `closed` moves — `has_resolved_reply` and
+      // every other compared field stay exactly as they were, so the merge
+      // has nothing else to notice it by.
+      rows[0].closed = true;
+      rows[0].closed_by = "laurent";
+
+      await act(async () => {
+        // Well past several poll cycles including the badge piggyback, rather
+        // than one tick of an interval this file cannot import. The assertion
+        // is "it arrives", not "it arrives on tick N".
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(resolve_buttons()).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("delegate dropdown surfaces member agents by agent_id (operator dm 165: it was empty)", async () => {
@@ -1273,7 +1685,7 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     render_page();
     await screen.findByText("five requirements");
     // The Hub says NOT resolved, so no answered chip — regardless of the reply.
-    expect(screen.queryByText("answered")).toBeNull();
+    expect(screen.queryByText("resolved")).toBeNull(); // operator dm#30: the word is "resolved"
   });
 
   it("still calms an ask when the Hub makes no statement (older hub)", async () => {
@@ -1285,7 +1697,7 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     });
     render_page();
     await screen.findByText("legacy ask");
-    await screen.findByText("answered");
+    await screen.findByText("resolved"); // operator dm#30: the word is "resolved"
   });
 
   it("groups replies under their root and counts threads, not messages", async () => {
@@ -1508,8 +1920,18 @@ describe("TeamPage threading + filters (2026-07-14 redesign)", () => {
     expect(screen.getByLabelText("1 unread reply in this loaded view")).toBeTruthy();
     expect(screen.getByLabelText("2 pending questions in the replies")).toBeTruthy();
     expect(screen.getByTitle("1 unread reply in this loaded view")).toBeTruthy();
-    expect(screen.queryByText("missed?")).toBeNull();
-    expect(document.querySelector(".team_chip_new")).toBeNull();
+    // THE UNREAD SIGNAL IS A COUNT, NEVER A WORD. This pair used to read
+    // `queryByText("missed?")` and `querySelector(".team_chip_new")` — and
+    // neither string exists anywhere in src/ any more: the NEW pill was
+    // deleted in favour of the row accent, and the bar's stat is
+    // `.team_thread_stat.new` rendering "● 1". So both assertions passed
+    // whatever the bar did, including a pill re-introduced under any other
+    // name. That is the absent-input-is-PASS shape, and it was guarding the
+    // one regression it could not see. Assert the invariant instead.
+    const bar = document.querySelector(".team_fold_group");
+    expect(bar).toBeTruthy();
+    expect(bar!.textContent).toMatch(/●\s*1/);
+    expect(bar!.textContent?.toLowerCase() ?? "").not.toMatch(/new|missed|unread/);
   });
 
   it("keeps message actions in the keyboard-reachable bottom-right rail", async () => {
@@ -1990,5 +2412,151 @@ describe("charters, missions and phases (agora 0146/0140; hub 0.17 wire contract
     render_page();
     await screen.findAllByText("#commons");
     expect(screen.queryByText("· mission set")).toBeNull();
+  });
+});
+
+describe("a clamped card always has a control that can unclamp it (operator dm 11)", () => {
+  // Reported live: "i just wrote a long message and i couldn't unfold it".
+  //
+  // `folded` is computed for EVERY thread card (`filter === "all" && !open`),
+  // with no reference to reply count, so `.team_thread_group_folded` lands on
+  // reply-less cards too. The fold control is built only when `n > 0`. The
+  // four-line clamp shipped for dm 6 keyed off the folded class ALONE, so a
+  // lone long message was truncated with nothing anywhere able to lift it.
+  //
+  // This is the invariant the geometry guard could not see: that check proves
+  // the fold control is not COVERED, and says nothing about whether one
+  // EXISTS. Content you cannot reach is worse than a control you cannot hit.
+  const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, data: null };
+  const long_body = Array.from({ length: 40 }, (_, i) => `line ${i + 1} of a long message that will be clamped`).join("\n\n");
+
+  // The clamp is a CSS rule scoped `.team_thread_group_folded.has_replies`,
+  // and jsdom applies no stylesheet, so "is the text clamped" is not directly
+  // observable here. What IS observable — and is the whole seam the CSS scope
+  // rests on — is which classes the component emits alongside which controls.
+  // The selector itself is asserted in fold_header_rail_clearance.test.ts;
+  // together the two say: the rule only fires on cards that carry a control.
+
+  it("gives a reply-less card neither a fold control nor the class the clamp keys on", async () => {
+    stub_hub({
+      messages: [{ ...base, id: "lone", seq: 1, sender: "laurent", status: "fyi", title: "a long dm", body: long_body, reply_to: null }],
+    });
+    render_page();
+    await screen.findByText("a long dm");
+
+    const card = document.querySelector(".team_thread_group");
+    expect(card).not.toBeNull();
+    // It is still "folded" — that drives the feed tint, which is fine.
+    expect(card!.classList.contains("team_thread_group_folded")).toBe(true);
+    // But it carries no control, so it must not carry the clamp's other key.
+    expect(card!.querySelector(".team_row_head.foldable, .team_reply_toggle")).toBeNull();
+    expect(card!.classList.contains("has_replies")).toBe(false);
+  });
+
+  it("every card carrying both clamp keys also carries a control", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "lone", seq: 1, sender: "laurent", status: "fyi", title: "a long dm", body: long_body, reply_to: null },
+        { ...base, id: "root", seq: 2, sender: "laurent", status: "open", title: "a thread root", body: long_body, reply_to: null },
+        { ...base, id: "child", seq: 3, sender: "core", status: "reply", title: "a reply", body: "short", reply_to: "root" },
+      ],
+    });
+    render_page();
+    await screen.findByText("a thread root");
+
+    const clamped = Array.from(document.querySelectorAll(".team_thread_group_folded.has_replies"));
+    // The threaded card SHOULD still match — otherwise this asserts nothing
+    // and would pass if the clamp were scoped into oblivion.
+    expect(clamped.length).toBeGreaterThan(0);
+    for (const card of clamped) {
+      const control = card.querySelector(".team_row_head.foldable, .team_reply_toggle");
+      expect(control, `a clamped card carries no control that can unclamp it: ${card.getAttribute("aria-label")}`).not.toBeNull();
+    }
+    // And laurent's card is specifically not among them.
+    expect(clamped.some((c) => (c.getAttribute("aria-label") || "").includes("a long dm"))).toBe(false);
+  });
+
+  it("restores the full text when the thread is unfolded", async () => {
+    stub_hub({
+      messages: [
+        { ...base, id: "root", seq: 1, sender: "laurent", status: "open", title: "a thread root", body: long_body, reply_to: null },
+        { ...base, id: "child", seq: 2, sender: "core", status: "reply", title: "a reply", body: "short", reply_to: "root" },
+      ],
+    });
+    render_page();
+    await screen.findByText("a thread root");
+    expect(document.querySelector(".team_thread_group_folded")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Show 1 reply/ }));
+    await screen.findByText("a reply");
+    expect(document.querySelector(".team_thread_group_folded")).toBeNull();
+  });
+});
+
+describe("the whole root card is the fold target (operator dm 11)", () => {
+  // dm 6 made the header bar the click target; dm 11 asked for the first
+  // message itself, as "more intuitive". The bar stays as the visible
+  // affordance, but the surface now extends past it.
+  const base = { channel: "commons", kind: "message", urgency: "inbox", created_at: 1, data: null };
+  const thread = [
+    { ...base, id: "root", seq: 1, sender: "laurent", status: "open", title: "a thread root", body: "the root body text", reply_to: null },
+    { ...base, id: "child", seq: 2, sender: "core", status: "reply", title: "a reply", body: "short", reply_to: "root" },
+  ];
+
+  it("unfolds when the card is clicked outside the header bar", async () => {
+    stub_hub({ messages: thread });
+    render_page();
+    await screen.findByText("a thread root");
+    expect(screen.queryByText("a reply")).toBeNull();
+
+    // The avatar: on the card, outside the header bar, not interactive.
+    const avatar = document.querySelector(".team_row .team_avatar");
+    expect(avatar).not.toBeNull();
+    fireEvent.click(avatar!);
+    await screen.findByText("a reply");
+  });
+
+  it("does NOT fold an open thread when the body text is clicked", async () => {
+    // The toggle is symmetric, so a body-inclusive target would collapse the
+    // thread under the cursor of someone reading it. This is the assertion
+    // that separates the feature from an irritation.
+    stub_hub({ messages: thread });
+    render_page();
+    await screen.findByText("a thread root");
+    fireEvent.click(screen.getByRole("button", { name: /^Show 1 reply/ }));
+    await screen.findByText("a reply");
+
+    const body = document.querySelector(".team_thread_group .team_row_body");
+    expect(body).not.toBeNull();
+    fireEvent.click(body!);
+    // Still open.
+    expect(screen.queryByText("a reply")).not.toBeNull();
+  });
+
+  it("a header-bar click still opens the thread now the card is also a target", async () => {
+    // This pins the HEADER path, which dm 6 built and dm 11 must not break.
+    // It does NOT pin the double-toggle guard in row_click: removing that
+    // guard leaves this green, because `toggle_thread` assigns the captured
+    // `folded` rather than negating the live value, so a double fire is
+    // idempotent. Measured, not assumed — the guard is documented as
+    // redundant in row_click rather than left looking load-bearing.
+    stub_hub({ messages: thread });
+    render_page();
+    await screen.findByText("a thread root");
+    const head = document.querySelector(".team_row_head.foldable");
+    expect(head).not.toBeNull();
+    fireEvent.click(head!);
+    await screen.findByText("a reply");
+  });
+
+  it("leaves a reply-less card alone — there is nothing to toggle", async () => {
+    stub_hub({
+      messages: [{ ...base, id: "lone", seq: 1, sender: "laurent", status: "fyi", title: "a long dm", body: "text", reply_to: null }],
+    });
+    render_page();
+    await screen.findByText("a long dm");
+    const avatar = document.querySelector(".team_row .team_avatar");
+    fireEvent.click(avatar!);
+    // No crash, no control, card unchanged.
+    expect(document.querySelector(".team_row_head.foldable")).toBeNull();
   });
 });

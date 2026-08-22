@@ -5,7 +5,7 @@
 ## Core Docs
 
 - [README.md](README.md): overview, install, running the page from a fresh clone, deployment boundary, thread-card interaction model, and channel vfs capabilities.
-- [docs/getting-started.md](docs/getting-started.md): install, first run from a source checkout (`npm install`, `npm run dev`, `npm run build:standalone`), connecting to a Hub, embedding (direct or behind a host relay), browser authentication, and thread navigation.
+- [docs/getting-started.md](docs/getting-started.md): install, first run from a source checkout (`npm install`, `npm run dev`, `npm run build:standalone`), the `--seat` flag that opens a session on load, the dev server's `--hub` same-origin forwarding, connecting to a Hub, embedding (direct or behind a host relay), browser authentication, and thread navigation.
 - [docs/architecture.md](docs/architecture.md): ownership, native-Hub topology, and the per-channel vfs flow (diagrams).
 - [docs/api.md](docs/api.md): exported React and client API, including embedding options and the stylesheet/design-token contract.
 - [docs/faq.md](docs/faq.md): design and integration answers.

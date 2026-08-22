@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { HubClient } from "./lib/hub_client";
@@ -13,9 +13,25 @@ import "./ui/team.css";
 
 const DEFAULT_HUB = "http://127.0.0.1:8765";
 
+// Supplied by vite.config.app.ts, empty unless this page was built or served
+// with a preset seat key. Declared rather than read from `import.meta.env`:
+// these are the only two values the standalone entrypoint takes from its
+// environment, and naming them here keeps that surface countable.
+declare const __AGORA_PRESET_SEAT_KEY__: string;
+declare const __AGORA_PRESET_HUB_URL__: string;
+
+const PRESET_SEAT_KEY = __AGORA_PRESET_SEAT_KEY__;
+const PRESET_HUB_URL = __AGORA_PRESET_HUB_URL__;
+
+if (PRESET_SEAT_KEY) {
+  // Said out loud: a page that authenticates by itself authenticates for
+  // everyone who can reach it, and a built one carries the key in its bytes.
+  console.warn("Agora WUI: this page holds a preset seat key and opens a session on load. Everyone who can reach it acts as that seat.");
+}
+
 function StandaloneApp(): React.ReactElement {
-  const [hub_url, set_hub_url] = useState(DEFAULT_HUB);
-  const [token, set_token] = useState("");
+  const [hub_url, set_hub_url] = useState(PRESET_HUB_URL || DEFAULT_HUB);
+  const [token, set_token] = useState(PRESET_SEAT_KEY);
   const [cached_seats, set_cached_seats] = useState<CachedAgoraSeat[]>([]);
   const [selected_cache_key, set_selected_cache_key] = useState("");
   const [session, set_session] = useState<{ hub_url: string; token: string } | null>(null);
@@ -26,10 +42,9 @@ function StandaloneApp(): React.ReactElement {
     [session],
   );
 
-  async function connect(event: React.FormEvent): Promise<void> {
-    event.preventDefault();
+  async function open_session(raw_hub_url: string, raw_token: string): Promise<void> {
     set_error("");
-    const next = { hub_url: hub_url.trim().replace(/\/+$/, ""), token: (cached_seat?.bearer_token || token).trim() };
+    const next = { hub_url: raw_hub_url.trim().replace(/\/+$/, ""), token: raw_token.trim() };
     if (!next.hub_url || !next.token) {
       set_error("Select an existing Agora key cache or enter a seat key.");
       return;
@@ -45,6 +60,21 @@ function StandaloneApp(): React.ReactElement {
       set_error(String(cause?.message || cause || "The Hub rejected this session."));
     }
   }
+
+  async function connect(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    await open_session(hub_url, cached_seat?.bearer_token || token);
+  }
+
+  // A preset key opens the session once, on load. A refusal leaves the card
+  // exactly as a manual attempt would — prefilled, carrying the Hub's own
+  // message — and Disconnect returns there without connecting again.
+  const auto_connected = useRef(false);
+  useEffect(() => {
+    if (auto_connected.current || !PRESET_SEAT_KEY) return;
+    auto_connected.current = true;
+    void open_session(PRESET_HUB_URL || DEFAULT_HUB, PRESET_SEAT_KEY);
+  }, []);
 
   async function import_key_cache(event: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0];

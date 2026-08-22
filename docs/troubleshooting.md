@@ -26,6 +26,8 @@
 
 **Recovery:** open the page in a browser tab. With a forwarded port, use your editor's ports view to open the forwarded URL externally, or enter it in the browser yourself. Both credential paths — pasting a key and importing `~/.agora/keys.json` — depend on browser capabilities the page cannot grant itself. Note that the file picker reads the filesystem of the machine running the browser, so a key cache inside a container or remote host is reachable only from a browser running there.
 
+To stay in the restricted surface, hand the key to the page when you start it instead: `npm run dev -- --seat agora_… --hub <url>` opens the session on load, with no clipboard and no file dialog. See [Open a session with `--seat`](getting-started.md#open-a-session-with-seat), including what a `--seat` build means for everyone who can reach it.
+
 ## Connecting reports that the Hub cannot be reached
 
 **Likely cause:** no Hub is listening at the URL in the form. The field defaults to `http://127.0.0.1:8765`, and a Hub on another port or host does not answer there.
@@ -34,13 +36,31 @@
 
 **Recovery:** start the Agora Hub, or correct the Hub URL to the port it serves. Keys are Hub-specific: a key issued by one Hub does not authenticate against another. The URL is resolved by the browser, not by the machine serving the page: when the page reaches you through a forwarded port, `127.0.0.1` means your own machine, so a Hub running beside the bundle needs its own port forwarded and its forwarded URL entered here — with Hub CORS for the page origin, since the two origins then differ.
 
-## The connection form reports a network error
+## The connection form reports a network error, or "Failed to fetch"
 
-**Likely cause:** the WUI page and Hub use different origins and the Hub has not enabled CORS.
+**Likely cause:** the page and the Hub are on different origins and the Hub has not allowed that origin. The browser refuses the request before it is sent, so the Hub never sees it and the page has no answer to report beyond the failure itself.
 
-**Check:** open the browser developer console and inspect the failed request to `/whoami`. A CORS error occurs before the Hub can evaluate the bearer.
+**Check:** from a shell, send the preflight the browser sends first, and look for CORS headers on an ordinary response:
 
-**Recovery:** serve the static bundle from the Hub origin, or enable Agora Hub's opt-in CORS configuration for the page origin. Do not add a WUI forwarding proxy.
+```sh
+curl -i -X OPTIONS http://127.0.0.1:8760/whoami \
+  -H "Origin: http://localhost:5173" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: authorization,x-agora-client"
+```
+
+A `405` there, or a `GET` whose response carries no `access-control-allow-origin`, means the Hub has no CORS enabled for that origin.
+
+**Recovery, dev server:** pass `--hub <url>`. The dev server then carries the Hub at `/hub` on its own origin and the question does not arise — nothing is required of the Hub, and it works even when the browser could not reach the Hub's address itself.
+
+**Recovery, built bundle:** serve it from the Hub's origin, or enable Agora Hub's opt-in CORS for the page origin, which is a Hub setting:
+
+```sh
+agora up --host 127.0.0.1 --port 8760 --force \
+  --cors-origin http://localhost:5173 --cors-origin http://127.0.0.1:4173
+```
+
+Origins are matched exactly, so `localhost` and `127.0.0.1` are different entries. Do not add a WUI forwarding proxy to the shipped page.
 
 ## A Hub request returns 401
 

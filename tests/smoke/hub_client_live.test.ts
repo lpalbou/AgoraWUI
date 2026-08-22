@@ -8,9 +8,47 @@ import { HubClient } from "../../src/lib/hub_client";
 
 const url = process.env.AGORA_WUI_E2E_URL;
 const key = process.env.AGORA_WUI_E2E_KEY;
-const live = url && key ? it : it.skip;
+const opted_in = Boolean(url && key);
+
+/** Globals these probes construct directly. Both are absent on Node 18: `File`
+ *  became a global in Node 20, `WebSocket` in Node 21. Deliberately NOT
+ *  polyfilled — the point of this file is a REAL transport against a real Hub,
+ *  and a shimmed WebSocket would prove something else while looking the same. */
+const REQUIRED_GLOBALS = ["WebSocket", "File"] as const;
+const missing = REQUIRED_GLOBALS.filter((name) => typeof (globalThis as Record<string, unknown>)[name] === "undefined");
+
+/** The probes need BOTH the credentials and a runtime that can build what they
+ *  construct. Gating on the runtime too means an opted-in reader on Node 18
+ *  gets ONE red naming the cause plus two honest skips, rather than that red
+ *  buried under two ReferenceErrors that read like the Hub refused them. */
+const live = opted_in && missing.length === 0 ? it : it.skip;
+
+/** The precondition gates on opt-in ALONE. Gating it on the runtime too would
+ *  make it skip itself in exactly the case it exists to report — which is the
+ *  bug this whole file is about, re-created one level up. */
+const when_opted_in = opted_in ? it : it.skip;
 
 describe("direct Hub client end-to-end", () => {
+  // WHY THIS EXISTS: skipping is how this file protects a running
+  // collaboration Hub, and that is correct. But a skip is indistinguishable
+  // from a pass, so it was also hiding the fact that BOTH tests below crash on
+  // this container even with valid credentials — `new WebSocket()` and
+  // `new File()` are ReferenceErrors on Node 18. Someone opting in would have
+  // read that as a Hub or transport failure and gone looking in the wrong
+  // place. Opted in on a runtime that cannot support it, they now get one
+  // sentence naming the real cause instead.
+  //
+  // Not opted in, this skips like everything else here: no new red in a normal
+  // `npm test`. It does no network I/O, so it is exercisable without a Hub.
+  when_opted_in("the runtime provides the globals these probes construct", () => {
+    expect(
+      missing,
+      `Node ${process.version} has no ${missing.join(" or ")}. These probes construct them directly, so ` +
+        `AGORA_WUI_E2E_URL/KEY cannot be honoured here whatever the Hub does. Needs Node 22+ (File landed ` +
+        `in 20, WebSocket in 21), or an explicit ws dependency for the transport probe.`,
+    ).toEqual([]);
+  });
+
   live("opens the documented WebSocket subscribe lane with the existing seat key", async () => {
     const hub = new HubClient({ base_url: url!, bearer_token: key! });
     const channel = (await hub.channels()).find((row) => row.member);

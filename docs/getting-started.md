@@ -47,6 +47,59 @@ The built HTML loads its assets from the origin root (`/assets/…`), so reach i
 
 `npm run build` is the library build instead. It typechecks, then emits `dist/` with the ES module, the type declarations, and the three stylesheets published to npm.
 
+## Open a session with `--seat`
+
+Hand the page a seat key when you start it and it opens an authenticated session on load, with no
+paste and no file picker. This is the practical path where the connection card cannot receive a
+key — embedded browser surfaces block both — and it removes the re-entry step from ordinary local
+work.
+
+```sh
+npm run dev -- --seat agora_… --hub http://127.0.0.1:8760
+```
+
+The same flags work on a build:
+
+```sh
+npm run build:standalone -- --seat agora_… --hub http://127.0.0.1:8760
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--seat <key>` | The seat key the page opens with |
+| `--hub <url>` | The Hub it opens against, replacing the `http://127.0.0.1:8765` default. On the dev server this also carries that Hub at `/hub` on the dev origin |
+
+`--hub` on the dev server means the page calls its own origin and Vite forwards to the Hub, so no
+CORS configuration is involved and a Hub the browser cannot route to — one on a container's
+loopback, say — is still reachable. That forwarding is the dev server's; a built bundle has none
+and calls the Hub directly, which is the deployment the [Browser deployment](#browser-deployment)
+section describes.
+
+`--seat` takes the key itself, never a seat name. Naming a seat would mean the build reading
+`~/.agora/keys.json` and authenticating as a seat whose secret nobody put on that command line;
+whoever starts the page supplies it explicitly, every time. Nothing is read from the environment
+for the same reason. That does mean the key enters your shell history — use your shell's leading-space
+convention, or run it from the page's connection card instead, if that matters to you.
+
+The dev server takes the flags whether it is bound to localhost or exposed to your network, so a
+page reached from a phone or another laptop opens the same session:
+
+```sh
+npm run dev -- --seat agora_… --hub http://192.168.1.20:8760 --host
+```
+
+Understand what a `--seat` build produces before serving it: **the seat key is written into the
+JavaScript, in cleartext, and everyone who loads that page acts as that seat.** Serve such a bundle
+only where you would hand out the key itself, never publish or copy it, and rotate the key if it
+escapes. The build prints a warning saying so. A build without `--seat` contains no key at all, and
+the published npm package has no path to one — the library build defines neither value and does not
+compile the standalone entrypoint.
+
+A key the Hub refuses leaves you on the connection card with its reason, prefilled, ready to
+correct by hand. To pick a seat out of `~/.agora/keys.json` instead of naming a key, use the card's
+file picker: that read happens in the browser, at your explicit selection, and nothing on the
+command line reaches for it.
+
 ## Connect to a Hub
 
 The standalone page opens on the **Open Team** card, which holds the session only in tab memory:
@@ -92,7 +145,7 @@ const hub = new HubClient({
 
 ## Browser deployment
 
-The bundle calls Agora Hub directly. Same-origin static hosting works with the native Hub routes. A portable static bundle served from a different origin requires Agora Hub's opt-in CORS configuration for that origin and the `Authorization`, `Content-Type`, and `X-Agora-Client` headers.
+The bundle calls Agora Hub directly. Same-origin static hosting works with the native Hub routes. A portable static bundle served from a different origin requires Agora Hub's opt-in CORS configuration for that origin and the `Authorization`, `Content-Type`, and `X-Agora-Client` headers — `agora up --cors-origin <origin>` on the Hub, which already allows exactly those three headers. The dev server's `--hub` forwarding does not apply here: a build ships no forwarding layer.
 
 Browser WebSockets use the existing Hub `/ws?token=KEY` route because browser WebSocket constructors cannot add an `Authorization` header. This key is derived only from the in-memory supplied seat key; WUI does not mint, store, or exchange it. WUI subscribes its readable channels with session-only received cursors, so a reconnect asks the Hub to replay any live gap; the normal REST poll remains the fallback.
 

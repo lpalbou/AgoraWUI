@@ -117,6 +117,42 @@ export type FilterContext = {
   debt_seqs?: Set<number>;
 };
 
+/**
+ * IS THIS THREAD SETTLED? The hub's verdict, or no answer at all.
+ *
+ * `closed` is the hub's own `_discharge` computation (agora-and-wui#11) and
+ * is authority-aware. `has_resolved_reply` is NOT the same question: it says
+ * a resolved reply EXISTS downthread, which a bystander sets without closing
+ * anything (ADR-0003). Four call sites here and in team_page.tsx read the
+ * second as if it were the first, which is why a bystander's `resolved` could
+ * hide a live ask from the Asks lens and take the Resolve button away from the
+ * seat whose thread it is.
+ *
+ * Returns undefined for "the hub made no statement" — a retracted row, or a
+ * hub older than the field. Callers choose their own fallback EXPLICITLY
+ * rather than reading undefined as open or as closed.
+ */
+export function hub_closed_verdict(m: HubMessage): boolean | undefined {
+  if (m.closed === true) return true;
+  if (m.closed === false) return false;
+  return undefined;
+}
+
+/**
+ * The pre-`closed` approximation, kept only for hubs that do not serve the
+ * verdict. Named so its call sites cannot mistake it for the real thing: it
+ * OVER-reports closure, because any bystander's `resolved` reply sets it.
+ */
+function legacy_resolved_guess(m: HubMessage): boolean {
+  return m.has_resolved_reply === true;
+}
+
+/** Settled, with the legacy approximation as the stated fallback. */
+export function msg_thread_closed(m: HubMessage): boolean {
+  const verdict = hub_closed_verdict(m);
+  return verdict === undefined ? legacy_resolved_guess(m) : verdict;
+}
+
 function msg_matches(m: HubMessage, filter: TeamFilter, ctx: FilterContext): boolean {
   // Retracted messages (agora 0097, operator dm 88) exist in All (dimmed
   // tombstones — transcript integrity) and in Unread while genuinely
@@ -137,28 +173,30 @@ function msg_matches(m: HubMessage, filter: TeamFilter, ctx: FilterContext): boo
       return Boolean(ctx.unread_seqs?.has(m.seq) || ctx.unread_snapshot_seqs?.has(m.seq));
     case "asks":
       // "Expects an answer" is the Hub's verdict, not the status word:
-      // a settled ask keeps status=open while `has_resolved_reply` and an
-      // empty `pending_asks` say it is done. Absent fields (older Hub) fall
-      // back to the status alone.
+      // a settled ask keeps status=open while `closed` and an empty
+      // `pending_asks` say it is done. Absent fields (older Hub) fall back
+      // to the status alone.
       if (status !== "open" && status !== "blocked") return false;
-      if (m.has_resolved_reply === true) return false;
+      if (msg_thread_closed(m)) return false;
       return (m.pending_asks?.length ?? 1) > 0;
     case "fyi":
       return status === "fyi";
     case "resolved":
-      // Closure is the ROOT's state: the hub reports it as
-      // `has_resolved_reply` on the root, and a root posted resolved is
-      // closed by construction. Matching any reply's status word filed
-      // open, escalating threads under Resolved because one bystander
-      // answered with status=resolved. filter_threads applies this to the
-      // root only (see below).
-      return status === "resolved" || m.has_resolved_reply === true;
+      // Closure is the ROOT's state, and the hub's `closed` is the only
+      // thing that reports it: a root posted resolved is closed by
+      // construction, and everything else is the hub's discharge verdict.
+      // Matching any reply's status word filed open, escalating threads
+      // under Resolved because one bystander answered with status=resolved
+      // — and `has_resolved_reply` had exactly that defect one layer down,
+      // which is why it is now only the older-hub fallback.
+      // filter_threads applies this to the root only (see below).
+      return status === "resolved" || msg_thread_closed(m);
     case "to_me":
       return (Array.isArray(m.to) && m.to.includes(ctx.seat)) || Boolean(ctx.to_me_seqs?.has(m.seq));
     case "vigilance": {
       const unanswered = ctx.debt_seqs
         ? ctx.debt_seqs.has(m.seq)
-        : (status === "open" || status === "blocked") && m.has_resolved_reply !== true;
+        : (status === "open" || status === "blocked") && !msg_thread_closed(m);
       const critical = m.critical === true;
       const to_me = (Array.isArray(m.to) && m.to.includes(ctx.seat)) || Boolean(ctx.to_me_seqs?.has(m.seq));
       // Hub escalation axes (backlog 0010): escalated/effective_urgency
@@ -748,6 +786,105 @@ export function neutralize_unsafe_embeds(text: string): string {
     const shown = String(alt || "").trim() || String(url);
     return "`" + shown.replace(/`/g, "") + " (link disabled)`";
   });
+}
+
+// ----------------------------------------------------------- citations
+
+/** A hub citation is the fleet's own cross-reference syntax — the rules say
+ *  "cite work as `channel#seq`", and inside a room people drop the channel
+ *  and write a bare `#412`. Operator dm 21/22: those should preview on
+ *  hover, cross-channel included.
+ *
+ *  Channel grammar is the hub's: lowercase, dots/dashes/underscores, and a
+ *  colon for the DM rooms (`dm:agora-wui--laurent#20`). */
+const CITE_CHANNEL_SRC = "[a-z][a-z0-9_.-]*(?::[a-z0-9_.-]+)*";
+
+/** The whole token, anchored — used to decide whether a code span the
+ *  renderer is about to draw is a citation. Anchored on purpose: a code
+ *  span containing prose that merely mentions `#5` is not a citation. */
+const CITATION_TOKEN_RE = new RegExp(`^(${CITE_CHANNEL_SRC})?#(\\d{1,9})$`);
+
+export type Citation = {
+  /** "" means "the channel you are reading" — a bare `#412`. Resolving that
+   *  needs the reader's context, which the parser deliberately does not
+   *  have; the caller supplies it. */
+  channel: string;
+  seq: number;
+};
+
+export function parse_citation(token: string): Citation | null {
+  const m = CITATION_TOKEN_RE.exec(String(token || "").trim());
+  if (!m) return null;
+  const seq = Number(m[2]);
+  // `#0` is not a seq (the hub numbers from 1), and a leading zero is a
+  // formatting accident rather than a reference.
+  if (!Number.isSafeInteger(seq) || seq < 1 || /^0/.test(m[2])) return null;
+  return { channel: m[1] || "", seq };
+}
+
+/** Prose citations, in the same shape as the URL rule above: the guard is
+ *  what must not match, not what must.
+ *    - `/` before it → a URL fragment or a path, not a citation;
+ *    - `#` before it → an id chain (`#1#2`), and a heading is `# ` with a
+ *      space, so `#123` at line start is a real citation and passes;
+ *    - a word char before it → mid-identifier, e.g. `sha1#3`... which is
+ *      exactly the `channel#seq` shape, so the channel capture takes it
+ *      instead and the guard only sees what precedes the channel;
+ *    - `.`, `:`, `@`, `-` before it → the other identifier joiners, and the
+ *      one that actually bit: `https://example.dev#12` has `dev` sitting in
+ *      channel position with a `.` in front of it, so without `.` in this
+ *      set a bare host-plus-fragment became the citation `dev#12`. Found by
+ *      the test, not by reading — the URL guard only covered `/`. */
+const CITATION_PROSE_RE = new RegExp(`(^|[^\\w\`#/.:@-])((?:${CITE_CHANNEL_SRC})?)#(\\d{1,9})(?![\\w#])`, "g");
+
+/** Wrap prose citations in backticks so they reach the Markdown renderer as
+ *  one code span, which is where they become hover chips. Render-time only —
+ *  the stored message never changes, exactly like `autolink_body`.
+ *
+ *  Fences and existing code spans are skipped for the same reason autolink
+ *  skips them: their content is code. A citation ALREADY written in
+ *  backticks (`commons#412`, which is how the rules tell agents to write
+ *  one) still becomes a chip — the renderer recognises the token, and this
+ *  pass exists only for the ones written bare. */
+export function linkify_citations(text: string): string {
+  if (!text || !/#\d/.test(text)) return text;
+  const fence_parts = text.split(/(```[\s\S]*?(?:```|$))/);
+  const out: string[] = [];
+  for (const part of fence_parts) {
+    if (part.startsWith("```")) {
+      out.push(part);
+      continue;
+    }
+    for (const seg of part.split(/(`[^`\n]*`)/)) {
+      if (seg.startsWith("`")) {
+        out.push(seg);
+        continue;
+      }
+      out.push(seg.replace(CITATION_PROSE_RE, (whole, before: string, chan: string, seq: string) => (parse_citation(`${chan}#${seq}`) ? `${before}\`${chan}#${seq}\`` : whole)));
+    }
+  }
+  return out.join("");
+}
+
+/** Clip a body for a preview WITHOUT shredding it (operator dm 49: the
+ *  citation card now renders markdown, and the card's old plain-text slice
+ *  becomes a parser hazard the moment it does).
+ *
+ *  A slice at an arbitrary offset can land inside a fenced block, leaving an
+ *  opening ``` with no close — remark then swallows every heading, list and
+ *  table after it into one code block, so the card renders a wall of grey.
+ *  Counting the fence markers and closing an odd one is the whole fix; the
+ *  cap itself stays because a card is a glance, not a reader. */
+export function clip_markdown(text: string, max: number): string {
+  const s = String(text || "");
+  if (s.length <= max) return s;
+  // Prefer a line boundary inside the last 20% of the budget: cutting
+  // mid-sentence is ugly, and mid-`**bold**` also mis-renders.
+  const head = s.slice(0, max);
+  const nl = head.lastIndexOf("\n");
+  const out = nl > max * 0.8 ? head.slice(0, nl) : head;
+  const fences = (out.match(/^```/gm) || []).length;
+  return `${out}${fences % 2 ? "\n```" : ""}\n\n…`;
 }
 
 // ------------------------------------------------------------ sender hue

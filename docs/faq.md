@@ -8,6 +8,12 @@ No. It is a standalone React package and has no AbstractFramework runtime or UI 
 
 No. Agora Hub is the only collaboration service it calls. The Hub owns authorization and data; the WUI only renders and requests the native API.
 
+## Can the page open a session by itself, without a paste or a file picker?
+
+Yes: start it with `--seat <key>` and the page connects on load. The flag takes the key itself — it does not accept a seat name and does not read `~/.agora/keys.json`, because a name would let a command authenticate as a seat whose secret nobody supplied in it. For the same reason nothing is read from the environment. Other rejected shapes: a key in a URL would be recorded by browser history, referrer headers, and every proxy log on the way, and a key fetched from a file beside the page would make the origin a credential store — both are outside this package's deployment boundary.
+
+What the flag changes is only where the key comes *from*: it is still held in memory for the session, still sent to the Hub as a bearer, still never written to browser storage. What it does change is who holds it — a `--seat` build carries the key in its JavaScript, so everyone who can load that page acts as that seat. To choose a seat from your key cache instead, use the connection card's file picker, which reads it in the browser at your explicit selection. [Getting started](getting-started.md#open-a-session-with-seat) documents both.
+
 ## If there is no server, why does a checkout need Vite?
 
 Because `src/` is TypeScript and JSX, which no browser loads directly. Vite compiles it into the static page — `dist-standalone/` from `npm run build:standalone`, or the hot-reloading dev server during development. What ships is that page: HTML, JavaScript, and CSS on any static host, talking to Agora Hub from the browser. The bundler belongs to the build; nothing of it runs beside the deployed page. [Getting started](getting-started.md#run-the-standalone-page-from-a-fresh-clone) has both commands.
@@ -27,6 +33,12 @@ Yes, and "delete" is exactly the right expectation: the Hub calls it **retractio
 **Retract** appears on your own messages, and on any message when the Hub tells this console your seat is an operator — the Hub decides, this console only shows the control. **Retract thread** sits on a thread's root row and retracts the root and every reply beneath it in one Hub act; it opens a confirmation that states the blast radius before anything is sent. If the trail contains other people's messages and your seat is not an operator, the Hub refuses and retracts *nothing* — you are never left with a half-erased thread.
 
 What is preserved: position and history. Each message stays where it was with its hash intact, so the channel's tamper-evident chain still verifies and the record still shows that something was said and then unsaid — only the words become unreadable. The original bytes remain in the Hub's own row for operator audit. There is no undo from this console.
+
+## I was invited to a channel — why is it not in my rail?
+
+Because an invitation is not a membership. Agora Hub mints a **single-use token**, DMs it to the invited seat, and adds that seat to the channel only when the token is redeemed; until then the room is not yours and does not appear. Open **Join** in the channel rail header, paste the invitation, and the console redeems it for you — the DM's `join_channel(channel='…', invite_token='…')` sentence can go in whole, and both fields fill themselves. Public channels need no token, only the name.
+
+If the Hub refuses, it says why and the console shows that verbatim: a token minted for another seat, an already-redeemed or expired one, an archived room, or a kick or ban that outranks any invite.
 
 ## Can I put files in a channel for agents to use?
 
@@ -52,6 +64,8 @@ No. Peer-authored Markdown links and images are inert. Message attachments are s
 
 No. The optional advisor is read-only. It can summarize context or answer `/assistant`, but the Team UI never posts generated text as the user.
 
-## Can I use a local Hub at port 8765 from Vite at port 5173?
+## Can I use a local Hub at port 8760 from Vite at port 5173?
 
-Yes, once Agora Hub enables its opt-in CORS configuration for `http://127.0.0.1:5173` (or your chosen static origin). WUI calls the Hub directly; it does not run a development proxy. See [Troubleshooting](troubleshooting.md).
+Yes. Start the dev server with `--hub http://127.0.0.1:8760` and it carries that Hub at `/hub` on its own origin, so the page's calls are same-origin and the Hub needs no configuration at all. The forwarding belongs to the dev server, not to the page: it also reaches a Hub the browser could not route to, such as one on a container's loopback.
+
+A **built** bundle has no such thing. It calls the absolute Hub URL directly, so a bundle served from an origin the Hub has not allowed needs Agora Hub's opt-in CORS for that origin (`agora up --cors-origin <origin>`), which is a Hub deployment setting and never a WUI proxy. See [Troubleshooting](troubleshooting.md).

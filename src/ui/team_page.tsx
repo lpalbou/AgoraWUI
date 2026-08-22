@@ -29,6 +29,7 @@ import { MemoMarkdown } from "./memo_markdown";
 import { ErrorBoundary } from "./error_boundary";
 import { verify_ledger, type LedgerVerdict } from "../lib/hub_ledger";
 import { extract_work_ids } from "../lib/work_id";
+import { parse_invite_ref, looks_like_invite_ref } from "../lib/invite_ref";
 import {
   TEAM_FILTERS,
   compose_status,
@@ -40,6 +41,9 @@ import {
   type TeamFilter,
   type Thread,
   autolink_body,
+  clip_markdown,
+  linkify_citations,
+  parse_citation,
   reflow_prose_walls,
   extract_fs_paths,
   extract_vfs_refs,
@@ -59,6 +63,7 @@ import {
   serialize_transcript,
   debt_seqs_by_channel,
   escalated_seqs_by_channel,
+  hub_closed_verdict,
   to_me_seqs_by_channel,
   unread_by_channel,
   unread_seqs_by_channel,
@@ -631,6 +636,57 @@ export function TeamPage(props: {
    *  never lose what the operator is typing. Hydrated once on mount. */
   const drafts = useRef<Record<string, { text: string; title: string; kind: "fyi" | "ask" | "dm" | "group" }>>(load_drafts());
   const prev_channel = useRef("");
+  /** Citation hover preview (operator dm 21/22). A `#412` or `commons#412`
+   *  in a message body renders as a chip; hovering it resolves the cited
+   *  message and shows it in a card. `state` is explicit rather than
+   *  inferred from `msg == null`: "still loading", "this seq does not
+   *  exist" and "I could not reach that room" are three different answers
+   *  and a preview that renders them identically is worse than no preview. */
+  type CiteCard = {
+    channel: string;
+    seq: number;
+    /** Viewport coords of the chip — the card anchors to it. */
+    anchor: { left: number; top: number; bottom: number };
+    state: "loading" | "found" | "missing" | "error";
+    msg?: HubMessage;
+    error?: string;
+    /** THE THREAD's state, which is not the root's `status` word (operator
+     *  dm 34: "you say you closed a message and on the mouseover we see it
+     *  is still opened"). A root posted `open` KEEPS that word forever; what
+     *  closes it is a `resolved` REPLY. So this is computed from the replies,
+     *  and is `undefined` when they are not in hand — a cross-channel
+     *  citation resolves one message and cannot see its trail, and rendering
+     *  the posted word there is the very thing that misled him. */
+    thread_state?: "open" | "resolved";
+  };
+  const [cite_card, set_cite_card] = useState<CiteCard | null>(null);
+  /** Resolved citations, keyed `channel#seq`. A miss is cached as `null` —
+   *  re-fetching a seq the hub already said does not exist, every time the
+   *  pointer crosses it, is the obvious way to turn a preview into a
+   *  request storm. */
+  const cite_cache = useRef<Map<string, HubMessage | null>>(new Map());
+  /** Rooms a `channel#seq` may name. Keyed on the sorted NAMES, not on the
+   *  channel array: that array is rebuilt on every poll, so memoizing on it
+   *  would hand MemoMarkdown a fresh Set every few seconds and re-parse
+   *  every message body on screen — precisely the storm backlog 0010's memo
+   *  boundary exists to stop. */
+  const cite_channel_key = useMemo(() => channels.map((c) => String(c.name)).sort().join("\n"), [channels]);
+  const cite_channels = useMemo<ReadonlySet<string>>(() => new Set(cite_channel_key ? cite_channel_key.split("\n") : []), [cite_channel_key]);
+  /** The ceiling for a BARE `#N` (operator dm 48). A number, so it costs the
+   *  memo boundary nothing: recomputing it every poll yields an equal value
+   *  and MemoMarkdown compares props BY VALUE — unlike the Set above, which
+   *  needed the string key.
+   *
+   *  Both sources are the hub's own: the rail's `last_seq` for the room, and
+   *  the loaded window (which briefly runs AHEAD of the rail right after you
+   *  post — take the max or your own new message stops chipping for a poll).
+   *  Zero means "no ceiling yet", and passing 0 would silence every chip
+   *  while the first window loads, so it is sent as undefined. */
+  const cite_bare_max = useMemo(() => {
+    let hi = Number(channels.find((c) => c.name === selected)?.last_seq) || 0;
+    for (const m of messages) hi = Math.max(hi, Number(m.seq) || 0);
+    return hi || undefined;
+  }, [channels, selected, messages]);
   const [posting, set_posting] = useState(false);
   const [ack_busy, set_ack_busy] = useState(false);
   const [notice, set_notice] = useState("");
@@ -725,6 +781,19 @@ export function TeamPage(props: {
     }
   }
 
+  /** Refetch the hub-wide roster from presence. `exclude` is the viewer's own
+   *  seat — passed in rather than read from state because the boot call runs
+   *  inside the same handler that discovers it, before the state lands. */
+  function load_roster(exclude: string): void {
+    void hub
+      .presence()
+      .then((rows) => {
+        const ids = [...new Set(rows.map((r) => String(r.agent_id || "")).filter((id) => id && id !== exclude))].sort();
+        set_roster(ids);
+      })
+      .catch(() => set_roster([]));
+  }
+
   function load_delegations(): void {
     hub
       .delegations()
@@ -782,7 +851,15 @@ export function TeamPage(props: {
    *  un-retire candidate list, operator-only (empty for non-operators). */
   const [retired, set_retired] = useState<Array<{ id?: string; reason?: string; retired_at?: number }> | null>(null);
   /** Hub-wide roster (presence: connected or not) — the DM recipient
-   *  dropdown source (operator dm 9: a real dropdown, never a text field). */
+   *  dropdown source (operator dm 9: a real dropdown, never a text field)
+   *  and the Members-drawer invite picker.
+   *
+   *  Refetched, not just seeded at boot (operator dm 3): a seat that
+   *  registers after the page loads is on the hub but absent from every
+   *  list built from this, and the only cure was a full reload. Presence is
+   *  the one source here that grows without any action by this client — the
+   *  member rows change when YOU act, so they were already reloaded on open
+   *  and this was not. */
   const [roster, set_roster] = useState<string[]>([]);
   const [mod_busy, set_mod_busy] = useState("");
   const [mod_error, set_mod_error] = useState("");
@@ -792,6 +869,11 @@ export function TeamPage(props: {
   const [invite_notice, set_invite_notice] = useState("");
   /** Channel admin (create / close / reopen) — hub enforces authority. */
   const [new_channel_form, set_new_channel_form] = useState<{ open: boolean; name: string; is_private: boolean }>({ open: false, name: "", is_private: false });
+  /** Joining: a room you were invited to does not arrive by itself. The hub
+   *  mints a single-use token and DMs it; membership starts when the seat
+   *  redeems it. Without this form an invited seat could read the invitation
+   *  and had no way to act on it. */
+  const [join_form, set_join_form] = useState<{ open: boolean; channel: string; token: string }>({ open: false, channel: "", token: "" });
   const [chan_admin_busy, set_chan_admin_busy] = useState(false);
 
   // Per-thread LLM summaries (root id → state). Session-only.
@@ -1176,13 +1258,7 @@ export function TeamPage(props: {
         .catch(() => set_health(null));
       // DM recipient roster: every agent sharing a channel with the seat,
       // connected or not (presence carries the full visible roster).
-      void hub
-        .presence()
-        .then((rows) => {
-          const ids = [...new Set(rows.map((r) => String(r.agent_id || "")).filter((id) => id && id !== m.seat))].sort();
-          set_roster(ids);
-        })
-        .catch(() => set_roster([]));
+      load_roster(String(m.seat || ""));
       // DMs are first-class since the operator's c2240 directive (his own
       // seat, his own console — the earlier dm-exclusion protected agent
       // surfaces; his call supersedes it here). The rail renders them as
@@ -1320,6 +1396,11 @@ export function TeamPage(props: {
             const changed =
               JSON.stringify(next.ratings ?? null) !== JSON.stringify(m.ratings ?? null) ||
               (next.has_resolved_reply ?? null) !== (m.has_resolved_reply ?? null) ||
+              // `closed`/`closed_by` are live discharge decorations too. Left
+              // out, a thread closing would re-serve a row this merge calls
+              // unchanged, and the chip would not move until a reload.
+              (next.closed ?? null) !== (m.closed ?? null) ||
+              (next.closed_by ?? null) !== (m.closed_by ?? null) ||
               JSON.stringify(next.pending_asks ?? null) !== JSON.stringify(m.pending_asks ?? null) ||
               Boolean(next.retracted) !== Boolean(m.retracted);
             if (changed) touched++;
@@ -1544,6 +1625,9 @@ export function TeamPage(props: {
     set_reply_to(null);
     set_reply_answers({});
     set_post_nudge("");
+    // A citation preview is anchored to a chip in the OUTGOING feed, and a
+    // bare `#412` resolved against the room being left. Both are stale now.
+    set_cite_card(null);
     // Attachments are channel-scoped (uploaded to `selected`) — a switch
     // drops any un-sent pending refs so they can't post to the wrong room.
     set_pending_attachments([]);
@@ -1646,6 +1730,26 @@ export function TeamPage(props: {
       flush(); // unmount = the component's own pagehide
     };
   }, []);
+
+  // A citation card is anchored to viewport coordinates read when the
+  // pointer entered the chip. Scrolling the feed moves the chip and not the
+  // card, so a scroll DISMISSES it rather than leaving it pointing at the
+  // wrong line. Escape closes it for the same reason a preview must be
+  // dismissible: it can sit on top of the text you were reading.
+  useEffect(() => {
+    if (!cite_card) return;
+    const drop = () => set_cite_card(null);
+    const on_key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") drop();
+    };
+    const el = list_ref.current;
+    el?.addEventListener("scroll", drop);
+    window.addEventListener("keydown", on_key);
+    return () => {
+      el?.removeEventListener("scroll", drop);
+      window.removeEventListener("keydown", on_key);
+    };
+  }, [cite_card]);
 
   // Scroll: on channel open snap to the BOTTOM (newest activity — thread
   // order is last_seq ascending); afterwards stick to bottom only when
@@ -1764,11 +1868,153 @@ export function TeamPage(props: {
 
   /** Row click records Hub read state. Open threads never clamp message
    *  bodies: the thread chevron is the one disclosure control for its
-   *  conversation, so readers do not have to hunt for a second expander. */
-  function row_click(m: HubMessage): void {
+   *  conversation, so readers do not have to hunt for a second expander.
+   *
+   *  On a foldable ROOT the whole card is also the fold target (operator dm
+   *  11: "simpler if just clicking the first thread message unfold/folds it
+   *  ... more intuitive"), superseding the header-bar-only target from dm 6.
+   *  The bar stays — it is now the visible affordance for a surface that
+   *  extends past it, rather than the only place the click lands.
+   *
+   *  THE MESSAGE BODY IS EXCLUDED, deliberately. Toggling is symmetric, so a
+   *  body-inclusive target would COLLAPSE an open thread the moment you
+   *  clicked the text you were reading — trading laurent's unreachable
+   *  content for a card that shuts under the cursor. Selection and
+   *  interactive children are already excluded below; the body is the third
+   *  case and the only one that is a judgment rather than a mechanic. */
+  function row_click(m: HubMessage, e?: React.MouseEvent, fold?: FoldControl): void {
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
     fire_read(m);
+    if (!fold || fold.disabled || !e) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button, a, input, select, textarea")) return;
+    // The header bar runs its own toggle and the event then bubbles here.
+    // BELT AND BRACES, AND CURRENTLY REDUNDANT — said plainly because it is
+    // not falsifiable and should not be mistaken for a load-bearing guard:
+    // `toggle_thread` ASSIGNS the captured `folded` rather than negating the
+    // live value, so firing it twice in one event is idempotent and the
+    // double fire cannot cancel out. This keeps the two paths disjoint anyway,
+    // so a future toggle rewritten as a negation does not silently become a
+    // no-op on every header click.
+    if (target.closest(".team_row_head")) return;
+    if (target.closest(".team_row_body, .team_fs_chips, .team_row_asks")) return;
+    fold.toggle();
+  }
+
+  /** Resolve a citation chip into the card (operator dm 21/22).
+   *
+   *  Three sources, cheapest first: the open channel's already-loaded window
+   *  (no request at all — the common case, since most citations point at the
+   *  room you are reading), the per-session cache, and only then the hub.
+   *  `since: seq - 1, limit: 1` asks for exactly the one message; a room the
+   *  seat cannot read answers with an error, which is a real state and is
+   *  shown as one rather than as an empty card. */
+  async function show_cite_card(el: HTMLElement): Promise<void> {
+    const seq = Number(el.getAttribute("data-cite-seq"));
+    // An empty data-cite-channel means "the room you are reading" — the bare
+    // `#412` case. Resolving it against `selected` is the whole reason the
+    // parser refuses to guess a channel itself.
+    const channel = el.getAttribute("data-cite-channel") || selected;
+    if (!Number.isSafeInteger(seq) || seq < 1 || !channel) return;
+    const r = el.getBoundingClientRect();
+    const anchor = { left: r.left, top: r.top, bottom: r.bottom };
+    const key = `${channel}#${seq}`;
+
+    const local = channel === selected ? messages.find((m) => Number(m.seq) === seq) : undefined;
+    if (local) {
+      set_cite_card({ channel, seq, anchor, state: "found", msg: local, thread_state: thread_state_of(local) });
+      return;
+    }
+    if (cite_cache.current.has(key)) {
+      const hit = cite_cache.current.get(key) || undefined;
+      set_cite_card({ channel, seq, anchor, state: hit ? "found" : "missing", msg: hit });
+      return;
+    }
+    set_cite_card({ channel, seq, anchor, state: "loading" });
+    try {
+      const list = await hub.messages(channel, { since: seq - 1, limit: 1 });
+      const hit = (list || []).find((m) => Number(m.seq) === seq) || null;
+      cite_cache.current.set(key, hit);
+      // The pointer may have moved on, or moved to ANOTHER citation, while
+      // this was in flight. Only the card still asking this question gets
+      // the answer — otherwise a slow fetch paints over a newer hover.
+      set_cite_card((cur) =>
+        cur && cur.channel === channel && cur.seq === seq ? { ...cur, state: hit ? "found" : "missing", msg: hit || undefined, thread_state: hit ? thread_state_of(hit) : undefined } : cur
+      );
+    } catch (e: any) {
+      set_cite_card((cur) => (cur && cur.channel === channel && cur.seq === seq ? { ...cur, state: "error", error: String(e?.message || e) } : cur));
+    }
+  }
+
+  /** Is the thread under this message closed? The root's own `status` never
+   *  changes, and asserting it as live state is operator dm 34.
+   *
+   *  The hub's `closed` verdict rides every message row (agora-and-wui#11),
+   *  so this now answers CROSS-CHANNEL too — the case that had to stay
+   *  silent when the only way to know was to read the trail, which a card
+   *  resolving one message cannot do. */
+  function thread_state_of(m: HubMessage): "open" | "resolved" | undefined {
+    const own = String(m.status || "").toLowerCase();
+    const verdict = hub_closed_verdict(m);
+    if (verdict === true) return "resolved";
+    if (verdict === false) return own === "open" || own === "blocked" ? "open" : undefined;
+    // No statement (retracted row, or a hub older than `closed`): fall back
+    // to the loaded trail, which exists only for the open channel. Note the
+    // fallback shares the defect `closed` exists to fix — a BYSTANDER's
+    // `resolved` reads as closed here. Kept because on such a hub there is
+    // nothing better; still silent cross-channel rather than printing the
+    // root's posted word, which is what misled the operator in the first
+    // place.
+    if (m.channel && m.channel !== selected) return undefined;
+    const window_msgs = messages_ref.current;
+    if (!window_msgs.some((x) => x.id === m.id)) return undefined; // not our window, cannot see the trail
+    const closed = window_msgs.some((x) => x.reply_to === m.id && String(x.status || "").toLowerCase() === "resolved");
+    if (closed) return "resolved";
+    return own === "open" || own === "blocked" ? "open" : undefined;
+  }
+
+  /** Click a citation chip: go to the cited message (operator dm 34).
+   *  Reuses the Board->Team focus anchor, so a cross-channel jump lands in
+   *  the room and scrolls once the window holds the message — including the
+   *  case where it is older than the loaded window. */
+  async function jump_to_cite(el: HTMLElement): Promise<void> {
+    const seq = Number(el.getAttribute("data-cite-seq"));
+    const channel = el.getAttribute("data-cite-channel") || selected;
+    if (!Number.isSafeInteger(seq) || seq < 1 || !channel) return;
+    const key = `${channel}#${seq}`;
+    let msg: HubMessage | undefined = channel === selected ? messages_ref.current.find((m) => Number(m.seq) === seq) : undefined;
+    if (!msg && cite_cache.current.has(key)) msg = cite_cache.current.get(key) || undefined;
+    if (!msg) {
+      try {
+        const list = await hub.messages(channel, { since: seq - 1, limit: 1 });
+        msg = (list || []).find((m) => Number(m.seq) === seq) || undefined;
+        cite_cache.current.set(key, msg || null);
+      } catch (e: any) {
+        set_error(String(e?.message || e || `could not read #${channel}`));
+        return;
+      }
+    }
+    // A citation that cannot be opened says so, rather than navigating to
+    // the room and leaving the reader hunting for a message that is not
+    // there — which is what a bare set_selected would do.
+    if (!msg) {
+      set_notice(`No message #${seq} in #${channel} to open.`);
+      setTimeout(() => set_notice(""), 3000);
+      return;
+    }
+    set_cite_card(null);
+    focus_anchor.current = { message_id: msg.id, seq };
+    // Same channel: set_selected is a no-op and the [messages] effect will
+    // not re-fire, so the anchor has to be consumed by hand (the comment on
+    // consume_focus_anchor already warns about exactly this).
+    if (channel === selected) consume_focus_anchor();
+    else set_selected(channel);
+  }
+
+  function cite_chip_at(target: EventTarget | null): HTMLElement | null {
+    const el = target as HTMLElement | null;
+    return el && typeof el.closest === "function" ? (el.closest("[data-cite-seq]") as HTMLElement | null) : null;
   }
 
   function message_copy_text(m: HubMessage): string {
@@ -1912,17 +2158,30 @@ export function TeamPage(props: {
    *  fetches fresh (adversary P2-8 folded the dead skip-if-loaded path —
    *  operator dm 128: the cached snapshot rendered a joined agent as
    *  absent; opening the drawer means "show me the members NOW"). */
-  function load_info(): void {
+  /** `keep`: refresh IN PLACE — leave the current rows on screen until the
+   *  fresh ones land, instead of clearing to a loading state first.
+   *
+   *  For a drawer OPEN, clearing is right: the user asked to see this room
+   *  now and a spinner is an honest answer. For a refresh fired by focusing
+   *  a dropdown it is wrong, and measurably so. `set_members(null)` plus
+   *  `set_info("loading")` does not blank the delegate picker — it makes it
+   *  fall through the `members ?? info.members ?? []` chain to a DIFFERENT
+   *  SOURCE, so for one round trip the open dropdown lists the channel-info
+   *  member ids rather than the roster rows it had a moment ago. A native
+   *  select paints its options at click time, so that is the list the user
+   *  picks from. Stale-but-consistent beats fresh-but-swapped-under-you. */
+  function load_info(opts?: { keep?: boolean }): void {
     {
       const gen = chan_gen.current;
-      set_info("loading");
+      const keep = Boolean(opts?.keep);
+      if (!keep) set_info("loading");
       // The drawer is where the rulings TEXT lives, so an explicit open
       // re-reads them for the same reason it re-reads members: opening
       // means "show me this room NOW", not "show me the last snapshot".
       void refresh_rulings(selected);
-      set_members(null);
+      if (!keep) set_members(null);
       set_members_error("");
-      set_blocked(null);
+      if (!keep) set_blocked(null);
       hub
         .channel_info(selected)
         .then((i) => {
@@ -1993,6 +2252,12 @@ export function TeamPage(props: {
       load_info();
       load_delegations(); // hub-wide delegate list rides the Members open
       load_missions(); // standing missions ride the Members open (operator)
+      // The roster rides it too (operator dm 3). load_info() refreshes the
+      // channel's OWN members, which is what the delegate dropdown reads;
+      // the invite picker reads the hub-wide roster, and that one was still
+      // whatever presence returned at page load. A seat that registered
+      // since was invisible until a reload.
+      load_roster(seat);
       set_mission_edit("");
       set_mission_error("");
     }
@@ -2878,6 +3143,41 @@ export function TeamPage(props: {
     }
   }
 
+  /** Accept what the invitation DM actually says: pasting the whole
+   *  `join_channel(channel='…', invite_token='…')` sentence into either field
+   *  fills both. A bare token or a plain channel name still works. */
+  function absorb_invite(text: string): void {
+    const ref = parse_invite_ref(text);
+    if (!ref.channel && !ref.invite_token) return;
+    set_join_form((f) => ({
+      open: true,
+      channel: ref.channel || f.channel,
+      token: ref.invite_token || f.token,
+    }));
+  }
+
+  async function join_channel(): Promise<void> {
+    const channel = join_form.channel.trim().replace(/^#/, "");
+    if (!channel || chan_admin_busy) return;
+    set_chan_admin_busy(true);
+    set_error("");
+    try {
+      // The hub decides: a private room without a token for THIS seat is
+      // refused, and so is an archived one or a blocked seat. Its refusal is
+      // shown as-is rather than pre-judged here.
+      await hub.join_channel(channel, join_form.token.trim() || undefined);
+      set_join_form({ open: false, channel: "", token: "" });
+      await refresh_channels();
+      set_selected(channel);
+      set_notice(`Joined #${channel}.`);
+      setTimeout(() => set_notice(""), 3000);
+    } catch (e: any) {
+      set_error(String(e?.message || e || "join refused"));
+    } finally {
+      set_chan_admin_busy(false);
+    }
+  }
+
   // ------------------------------------------------------------- LLM lanes
 
   /** One advisor call. Both AI features use the optional injected advisor. */
@@ -3127,12 +3427,40 @@ export function TeamPage(props: {
     }
   }
 
+  /** The seats an ask is pinned to, or [] for an ask that names nobody
+   *  (which the hub treats as the room's, so anyone may discharge it). */
+  function ask_to(a: any): string[] {
+    return Array.isArray(a?.to) ? a.to.map(String).filter(Boolean) : [];
+  }
+
+  /** Is this ask THIS seat's to discharge? (operator commons#75)
+   *
+   *  Message-level `to` and per-ask `to` are different things, and conflating
+   *  them is what produced the refusal in laurent's screenshot: `commons#70`
+   *  was addressed to laurent AND agora at the message level, while ask 1
+   *  inside it was pinned to agora alone.
+   *
+   *  Prefers the hub's own subset (`/owed.to_answer[].asks_naming_you`) over
+   *  re-deriving it here — an EMPTY served subset is authoritative and means
+   *  "no ask here is yours", exactly as the Decline path already reads it.
+   *  Falls back to the ask's own `to` only when no /owed row exists at all. */
+  function ask_is_mine(m: HubMessage, a: any): boolean {
+    const served = owed_asks[m.channel]?.[m.seq];
+    if (served) return served.includes(String(a?.id));
+    const to = ask_to(a);
+    return to.length === 0 || to.includes(seat);
+  }
+
   function start_reply(m: HubMessage): void {
     set_reply_to(m);
     // Single-ask parents default to discharging it (usability critic: the
-    // default outcome of a reply was a mechanically void answer).
+    // default outcome of a reply was a mechanically void answer) — but ONLY
+    // when the ask is this seat's. Ticking it unconditionally is what made
+    // laurent's reply to `commons#70` illegal before he typed a word: one
+    // ask, pinned to another seat, checked on his behalf, refused at post
+    // time with a red banner about ids he never chose (commons#72/#74/#75).
     const asks = m.data?.asks || [];
-    set_reply_answers(asks.length === 1 ? { [asks[0].id]: true } : {});
+    set_reply_answers(asks.length === 1 && ask_is_mine(m, asks[0]) ? { [asks[0].id]: true } : {});
     set_post_nudge("");
     set_compose_kind("fyi"); // status becomes "reply" at post time
   }
@@ -3507,6 +3835,17 @@ export function TeamPage(props: {
     }
     set_posting(true);
     set_error("");
+    // The post is async, so the operator can switch rooms while it is in
+    // flight — and on a stalled hub that window is long. Everything else on
+    // this path already rides chan_gen; the composer RESET did not, so the
+    // clear below landed on whatever room he had switched to, blanking the
+    // draft he was typing there and (300ms later, via the prune) deleting it
+    // from localStorage too. The generation discriminates the two cases: a
+    // switch during the await has already bumped it in the [selected]
+    // effect, while this handler's OWN navigation (the dm and group lanes
+    // call set_selected below) has not yet been committed when the reset
+    // runs — so those still clear, as they must.
+    const gen = chan_gen.current;
     try {
       if (!reply_to && !in_dm && compose_kind === "dm") {
         // Direct message: opens dm:<a>--<b> (sorted pair) on first use —
@@ -3592,18 +3931,26 @@ export function TeamPage(props: {
         // fire-and-forget, its own notices; never blocks or fails the send.
         if (!in_dm && body) void invite_mentioned_nonmembers(selected, body);
       }
-      set_compose_text("");
-      set_compose_title("");
-      set_compose_hub_data("");
-      set_show_compose_hub_data(false);
-      set_pending_attachments([]);
-      set_reply_to(null);
-      set_reply_answers({});
-      set_compose_kind("fyi");
-      set_dm_peer(""); // a stale recipient must never ride into the next send
-      set_post_nudge("");
+      // CHANNEL-scoped, so it runs whatever the operator is now looking at:
+      // the draft belongs to the room posted TO, and leaving it behind would
+      // resurrect a sent message on the next reload.
       delete drafts.current[selected];
       save_drafts(drafts.current); // the sent draft must not resurrect on reload
+      // VIEW-scoped: these clear the box on screen. If the operator switched
+      // rooms during the post, that box is a different room's and holds a
+      // different draft — clearing it is data loss, not cleanup.
+      if (gen === chan_gen.current) {
+        set_compose_text("");
+        set_compose_title("");
+        set_compose_hub_data("");
+        set_show_compose_hub_data(false);
+        set_pending_attachments([]);
+        set_reply_to(null);
+        set_reply_answers({});
+        set_compose_kind("fyi");
+        set_dm_peer(""); // a stale recipient must never ride into the next send
+        set_post_nudge("");
+      }
       setTimeout(() => set_notice(""), 3000);
     } catch (e: any) {
       const msg = String(e?.message || e || "Post failed");
@@ -4187,6 +4534,11 @@ export function TeamPage(props: {
                 className="team_compose_control team_invite_select"
                 value={invite_peer}
                 onChange={(e) => set_invite_peer(e.target.value)}
+                // Opening the picker refetches too (operator dm 3). The tab
+                // open already refreshes, but a drawer left open across the
+                // minutes it takes a spawned agent to register would still
+                // show a stale list at the moment of the click.
+                onFocus={() => load_roster(seat)}
                 disabled={Boolean(invite_busy)}
                 title="Agents on the hub not yet in this channel"
               >
@@ -4528,6 +4880,13 @@ export function TeamPage(props: {
                   className="team_compose_control team_invite_select"
                   value={delegate_pick}
                   onChange={(e) => set_delegate_pick(e.target.value)}
+                  // Same refresh-on-open as the invite picker (operator dm 3).
+                  // This list reads the channel's member rows, so load_info()
+                  // is the fetch that matters for it, not the roster.
+                  // `keep` because this refresh happens UNDER an open dropdown
+                  // — see load_info: clearing swaps the list for another
+                  // source's for the length of the round trip.
+                  onFocus={() => load_info({ keep: true })}
                   title="Assign a delegate: any registered agent except operators and current delegates"
                 >
                   <option value="">assign a delegate…</option>
@@ -4645,6 +5004,27 @@ export function TeamPage(props: {
     );
   }
 
+  /** Is this thread closed? ONE definition, because the chip and the Resolve
+   *  button used to answer it separately and the button's answer was just the
+   *  posted status word — which never changes, so it offered Resolve on an
+   *  already-resolved thread (operator dm#30). Two sources, one question: the
+   *  shape behind three defects today. */
+  function msg_is_resolved(m: HubMessage): boolean {
+    const status = String(m.status || "").toLowerCase();
+    if (status !== "open" && status !== "blocked") return false;
+    // THE HUB'S VERDICT FIRST. `closed` is authority-aware; the older
+    // `has_resolved_reply` only says a resolved reply exists downthread, so
+    // a BYSTANDER's `resolved` used to read as closed here — which took the
+    // Resolve button away from the seat whose thread it actually is.
+    const verdict = hub_closed_verdict(m);
+    if (verdict !== undefined) return verdict;
+    if (m.has_resolved_reply === true) return true;
+    if (m.has_resolved_reply === undefined || m.has_resolved_reply === null) {
+      return Boolean(m.id && window_replied_ids.has(m.id));
+    }
+    return false;
+  }
+
   function msg_chips(m: HubMessage, is_root: boolean): React.ReactElement[] {
     const chips: React.ReactElement[] = [];
     const status = String(m.status || "").toLowerCase();
@@ -4656,17 +5036,16 @@ export function TeamPage(props: {
     // was the hub's PRE-2026-08 rule and marked live, escalating asks as
     // answered. It survives only where the hub makes no statement (null /
     // absent — an older hub), never as an override.
-    const answered =
-      (status === "open" || status === "blocked") &&
-      (m.has_resolved_reply === true ||
-        (m.has_resolved_reply === undefined || m.has_resolved_reply === null
-          ? Boolean(m.id && window_replied_ids.has(m.id))
-          : false));
+    const answered = msg_is_resolved(m);
     // fyi is the room's baseline — chip only the states that MEAN something.
     if (answered) {
       chips.push(
         <AfChip key="st" tone="success" size="sm" title="The Hub reports a resolving reply in this thread — its own discharge verdict, not a count of replies.">
-          answered
+          {/* "resolved", not "answered" (operator dm#30). The hub's own word
+              for this state is `resolved`, it is the word on the reply that
+              produces it, and "answered" invited exactly the question laurent
+              asked — whether a thing that had been answered was also closed. */}
+          resolved
         </AfChip>
       );
     } else if (status === "open" || status === "blocked") {
@@ -4841,7 +5220,7 @@ export function TeamPage(props: {
         className={`team_row has_actions ${m.sender === seat ? "own" : ""} ${highlight ? "hit" : ""} ${replying ? "replying" : ""} ${unread ? "unread" : ""} ${m.retracted ? "retracted" : ""}`}
         key={m.id}
         id={`hubmsg-${m.id}`}
-        onClick={() => row_click(m)}
+        onClick={(e) => row_click(m, e, opts.fold)}
         title={m.critical ? "Click to record the read (critical unpins on it)" : undefined}
       >
         {/* Identity anchor: hue-stable initial (the same hash that colors
@@ -4968,7 +5347,12 @@ export function TeamPage(props: {
               (whitespace only, words verbatim) so the dm-116 rhythm has
               something to work with. */}
           <div className="team_row_body">
-            <MemoMarkdown className="md_doc" text={neutralize_unsafe_embeds(autolink_body(reflow_prose_walls(body), { hub_base: hub_url }))} />
+            {/* linkify_citations LAST (operator dm 21/22): it wraps a bare
+                `#412` / `commons#412` in backticks so the renderer turns it
+                into a hover chip. After neutralize, because neutralize
+                MAKES code spans (`… (link disabled)`) and a citation inside
+                one is already code. */}
+            <MemoMarkdown className="md_doc" cite_channels={cite_channels} cite_bare_max={cite_bare_max} text={linkify_citations(neutralize_unsafe_embeds(autolink_body(reflow_prose_walls(body), { hub_base: hub_url })))} />
           </div>
           {render_attachments(m)}
           {/* Channel-fs paths mentioned in the message (operator dm 69):
@@ -5072,11 +5456,39 @@ export function TeamPage(props: {
                   the to_close row, neither of which feeds this list. The
                   refusal is still visible where the hub does serve it: on
                   the declining reply, which chips "✗ declines". */}
-              {asks.map((a) => (
-                <span key={a.id} className="team_ask" title={a.text}>
-                  ask {a.id}: {a.text.length > 90 ? a.text.slice(0, 90) + "…" : a.text}
-                </span>
-              ))}
+              {/* The recipient rides the chip (operator commons#75).
+               *
+               * THIS LABEL STATES ADDRESSING, NEVER PERMISSION (operator
+               * dm#28). It first read "→ anyone" for an ask with no `to`,
+               * justified as "an ask with no to is genuinely the room's".
+               * That justification was wrong, and laurent hit it within the
+               * hour: the label said ANYONE while the checkbox beside it was
+               * disabled, because the label came from the ask payload and
+               * the permission came from the hub's `asks_naming_you`. Two
+               * sources answering one question — the same defect this very
+               * commit was written to fix, reintroduced one line below the
+               * fix.
+               *
+               * `to: []` is a fact about who the ask NAMES, and it does not
+               * mean everyone may discharge it: the hub still refuses the
+               * asker, and refuses anyone its served subset excludes. So the
+               * chip now says "unassigned" — which is what an empty `to`
+               * actually is — and permission is stated in exactly one place,
+               * the composer's enablement. */}
+              {asks.map((a) => {
+                const to = ask_to(a);
+                return (
+                  <span
+                    key={a.id}
+                    className={`team_ask ${to.length && !to.includes(seat) ? "team_ask_other" : ""}`}
+                    title={to.length ? `Addressed to ${to.join(", ")} — ${a.text}` : `Names no seat — ${a.text}`}
+                  >
+                    ask {a.id}
+                    <span className="team_ask_to">{to.length ? ` → ${to.join(", ")}` : " → unassigned"}</span>
+                    : {a.text.length > 90 ? a.text.slice(0, 90) + "…" : a.text}
+                  </span>
+                );
+              })}
             </div>
           ) : null}
         </div>
@@ -5244,7 +5656,24 @@ export function TeamPage(props: {
             {/* Resolve (operator dm 21): declare the topic closed. Only on
                 roots that actually opened something (open/blocked) — a
                 resolved post closes the thread on the hub. Two-step. */}
-            {opts.is_root && (String(m.status || "").toLowerCase() === "open" || String(m.status || "").toLowerCase() === "blocked") ? (
+            {/* NOT OFFERED ON AN ALREADY-RESOLVED THREAD (operator dm#30,
+             *  scoped by dm#42: "let's not allow to reopen a closed thread
+             *  for now. we can always create a new thread referring to an
+             *  old one").
+             *
+             *  A root keeps its posted status word forever — `open` is what
+             *  the sender chose, not the thread's state — so gating on the
+             *  word alone kept offering Resolve on a thread that was already
+             *  closed. Resolving twice posts a second resolved reply and
+             *  reads, to the operator, as the console not knowing what it
+             *  had already done.
+             *
+             *  `msg_is_resolved` is the hub's `has_resolved_reply` verdict
+             *  with the same fallback the chip uses — one source, and no
+             *  reopen affordance in its place, per dm#42. */}
+            {opts.is_root &&
+            !msg_is_resolved(m) &&
+            (String(m.status || "").toLowerCase() === "open" || String(m.status || "").toLowerCase() === "blocked") ? (
               <span className="team_resolve_wrap">
                 {resolve_nudge === m.id ? (
                   <input
@@ -5546,6 +5975,14 @@ export function TeamPage(props: {
             <span className="pane_header_actions">
               <button
                 className="btn btn_icon"
+                title="Join a channel — paste an invitation, or name a public channel"
+                aria-label="Join channel"
+                onClick={() => set_join_form((f) => ({ ...f, open: !f.open }))}
+              >
+                <Icon name="enter" size={14} />
+              </button>
+              <button
+                className="btn btn_icon"
                 title="Create a channel (you become its owner)"
                 aria-label="New channel"
                 onClick={() => set_new_channel_form((f) => ({ ...f, open: !f.open }))}
@@ -5554,6 +5991,29 @@ export function TeamPage(props: {
               </button>
             </span>
           </div>
+          {join_form.open ? (
+            <div className="team_new_channel team_join_channel">
+              <input
+                value={join_form.channel}
+                onChange={(e) => { absorb_invite(e.target.value); set_join_form((f) => ({ ...f, channel: looks_like_invite_ref(e.target.value) ? f.channel : e.target.value })); }}
+                onPaste={(e) => absorb_invite(e.clipboardData.getData("text"))}
+                placeholder="channel, or paste the invitation"
+                spellCheck={false}
+                onKeyDown={(e) => { if (e.key === "Enter") void join_channel(); }}
+              />
+              <input
+                value={join_form.token}
+                onChange={(e) => { absorb_invite(e.target.value); set_join_form((f) => ({ ...f, token: looks_like_invite_ref(e.target.value) ? f.token : e.target.value })); }}
+                onPaste={(e) => absorb_invite(e.clipboardData.getData("text"))}
+                placeholder="invite token (public channels: leave empty)"
+                spellCheck={false}
+                onKeyDown={(e) => { if (e.key === "Enter") void join_channel(); }}
+              />
+              <button className="btn primary" disabled={!join_form.channel.trim() || chan_admin_busy} onClick={() => void join_channel()}>
+                {chan_admin_busy ? "Joining…" : "Join"}
+              </button>
+            </div>
+          ) : null}
           {new_channel_form.open ? (
             <div className="team_new_channel">
               <input
@@ -5955,7 +6415,55 @@ export function TeamPage(props: {
             </span>
           </div>
 
-          <div className="pane_body team_thread" ref={list_ref}>
+          <div
+            className="pane_body team_thread"
+            ref={list_ref}
+            /* Citation previews (operator dm 21/22) are delegated from the
+               feed rather than bound per chip: the chips are produced by the
+               Markdown renderer, which knows nothing about the hub, and there
+               can be hundreds of them on screen. */
+            onMouseOver={(e) => {
+              const chip = cite_chip_at(e.target);
+              if (chip) void show_cite_card(chip);
+            }}
+            onMouseOut={(e) => {
+              if (!cite_chip_at(e.target)) return;
+              // Moving from the chip INTO the card must not close it — the
+              // card is how you read a long citation.
+              const to = e.relatedTarget as HTMLElement | null;
+              if (to && typeof to.closest === "function" && to.closest(".team_cite_card")) return;
+              set_cite_card(null);
+            }}
+            /* Keyboard parity: the chips are focusable, so a preview must be
+               reachable without a pointer. */
+            onFocus={(e) => {
+              const chip = cite_chip_at(e.target);
+              if (chip) void show_cite_card(chip);
+            }}
+            onBlur={(e) => {
+              if (cite_chip_at(e.target)) set_cite_card(null);
+            }}
+            /* Hover previews, CLICK NAVIGATES (operator dm 34). Capture
+               phase and stopPropagation so the row's own click handler
+               never also runs — the chip lives inside the message body, and
+               a jump that additionally folded the thread you just left
+               would be its own bug. */
+            onClickCapture={(e) => {
+              const chip = cite_chip_at(e.target);
+              if (!chip) return;
+              e.preventDefault();
+              e.stopPropagation();
+              void jump_to_cite(chip);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              const chip = cite_chip_at(e.target);
+              if (!chip) return;
+              e.preventDefault();
+              e.stopPropagation();
+              void jump_to_cite(chip);
+            }}
+          >
             {search_view ? (
               // SEARCH RESULTS VIEW (agora-0132): render the served grouped
               // report verbatim — six fixed sections, served order, loud
@@ -6157,6 +6665,87 @@ export function TeamPage(props: {
             )}
           </div>
 
+          {/* CITATION PREVIEW (operator dm 21/22). Fixed to the viewport and
+              anchored to the chip's own rect, so it is not clipped by the
+              feed's scroll container. Rendered as a SIBLING of the feed for
+              the same reason. */}
+          {cite_card ? (
+            <div
+              className="team_cite_card"
+              role="tooltip"
+              style={{
+                // Prefer above the chip; flip below when there is no room.
+                // 400 is the card's max-height in the stylesheet — the one
+                // number shared with the CSS, and it is the pessimistic case.
+                ...(cite_card.anchor.top > 420 ? { bottom: `${Math.max(8, window.innerHeight - cite_card.anchor.top + 8)}px` } : { top: `${cite_card.anchor.bottom + 8}px` }),
+                // 706 = the stylesheet's 686px card + 20px of margin. The
+                // two numbers must move together; the stylesheet is the
+                // source and this is the only place that mirrors it.
+                left: `${Math.max(8, Math.min(cite_card.anchor.left, Math.max(8, window.innerWidth - 706)))}px`,
+              }}
+              onMouseLeave={() => set_cite_card(null)}
+            >
+              <div className="team_cite_head">
+                {/* Always fully qualified, even when the citation was a bare
+                    `#412` — the card is where you find out WHICH room it
+                    resolved against. */}
+                <span className="team_cite_ref">
+                  {cite_card.channel}#{cite_card.seq}
+                </span>
+                {cite_card.state === "found" && cite_card.msg ? (
+                  <>
+                    <span className="team_cite_sender">{String(cite_card.msg.sender || "")}</span>
+                    {/* THREAD state, never the root's posted word (dm 34).
+                        Absent when the replies are not in hand — a
+                        cross-channel citation resolves one message, and
+                        printing its `open` there is what said "still open"
+                        about a thread that had been closed. */}
+                    {cite_card.thread_state ? (
+                      <span className="team_cite_status" title={cite_card.thread_state === "resolved" ? "A resolved reply closes this thread" : "No resolved reply in this thread yet"}>
+                        {cite_card.thread_state}
+                      </span>
+                    ) : null}
+                    <span className="team_cite_open" aria-hidden="true">
+                      click to open →
+                    </span>
+                  </>
+                ) : null}
+              </div>
+              {cite_card.state === "loading" ? <div className="muted team_cite_note">Loading…</div> : null}
+              {/* A seq the hub does not serve and a room this seat cannot
+                  read are DIFFERENT answers. Collapsing them into one empty
+                  card is how a permissions boundary reads as a broken link. */}
+              {cite_card.state === "missing" ? <div className="muted team_cite_note">No message #{cite_card.seq} in #{cite_card.channel} — it may be out of the served window, retracted, or never posted.</div> : null}
+              {cite_card.state === "error" ? <div className="muted team_cite_note">Could not read #{cite_card.channel}: {cite_card.error}</div> : null}
+              {cite_card.state === "found" && cite_card.msg ? (
+                <>
+                  {String(cite_card.msg.title || "").trim() ? <div className="team_cite_title">{String(cite_card.msg.title)}</div> : null}
+                  {/* Markdown, the same pipeline the feed uses (operator dm
+                      49) minus `linkify_citations`: a chip inside the card
+                      would be a hover affordance nested in a hover surface,
+                      and `cite_channels` is deliberately omitted for the same
+                      reason the charter and file viewers omit it.
+                      `neutralize_unsafe_embeds` is NOT optional here — this
+                      is peer-authored text and the card is the one place it
+                      renders outside the feed.
+                      The old plain-text slice was justified as "a markdown
+                      re-parse per hover is what MemoMarkdown exists to
+                      avoid": that cost is per FEED ROW (200 of them), and a
+                      card is one node that exists only while the pointer is
+                      on a chip. `clip_markdown` keeps the cap and stops the
+                      slice landing inside a fence. */}
+                  <div className="team_cite_body">
+                    {String(cite_card.msg.body || "").trim() ? (
+                      <Markdown className="md_doc" text={clip_markdown(neutralize_unsafe_embeds(autolink_body(reflow_prose_walls(String(cite_card.msg.body)), { hub_base: hub_url })), 1200)} />
+                    ) : (
+                      "(no body)"
+                    )}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+
           <div
             className="team_composer"
             onKeyDown={(e) => {
@@ -6178,18 +6767,43 @@ export function TeamPage(props: {
                 </button>
                 {(reply_to.data?.asks || []).length ? (
                   <span className="team_reply_asks">
-                    {(reply_to.data?.asks || []).map((a) => (
-                      <label key={a.id} title={a.text}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(reply_answers[a.id])}
-                          onChange={(e) => set_reply_answers((cur) => ({ ...cur, [a.id]: e.target.checked }))}
-                        />
-                        <span className="team_reply_ask_text">
-                          ask {a.id}: {a.text.length > 70 ? a.text.slice(0, 70) + "…" : a.text}
-                        </span>
-                      </label>
-                    ))}
+                    {/* WHO EACH ASK IS FOR, and no tickbox for one that is not
+                        yours (operator commons#75). The composer used to offer
+                        an identical checkbox for every ask regardless of who it
+                        named, and the only feedback was the hub refusing the
+                        post — "you may not discharge ask ids not addressed to
+                        you". The recipient was nowhere on screen, so there was
+                        nothing to read that would have prevented it. */}
+                    {(reply_to.data?.asks || []).map((a) => {
+                      const to = ask_to(a);
+                      const mine = ask_is_mine(reply_to, a);
+                      return (
+                        <label
+                          key={a.id}
+                          className={mine ? "" : "team_reply_ask_not_mine"}
+                          title={
+                            mine
+                              ? a.text
+                              : `${a.text}\n\nThis ask is ${to.length ? `for ${to.join(", ")}` : "not yours"} — the hub refuses a discharge from anyone else. Reply without it to add context; the ask stays open for the named seat.`
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            checked={mine && Boolean(reply_answers[a.id])}
+                            disabled={!mine}
+                            onChange={(e) => set_reply_answers((cur) => ({ ...cur, [a.id]: e.target.checked }))}
+                          />
+                          <span className="team_reply_ask_text">
+                            ask {a.id}
+                            {/* Addressing only — see the row chip's note. The
+                                enablement beside it is the one statement about
+                                permission, and it comes from the hub. */}
+                            <span className="team_ask_to">{to.length ? ` → ${to.join(", ")}` : " → unassigned"}</span>
+                            : {a.text.length > 70 ? a.text.slice(0, 70) + "…" : a.text}
+                          </span>
+                        </label>
+                      );
+                    })}
                   </span>
                 ) : null}
                 <button className="team_row_expand" onClick={cancel_reply}>

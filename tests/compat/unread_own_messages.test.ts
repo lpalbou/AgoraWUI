@@ -60,3 +60,29 @@ describe("already-read obligations are not unread", () => {
     expect(unread_by_channel(legacy, "laurent")).toEqual({ commons: 2 });
   });
 });
+
+describe("an unread seq the row cannot be found by is not an unread seq", () => {
+  // The seq set drives navigation — the Unread filter, the row dots, the
+  // jump-to-oldest-unread. An envelope with no numeric seq would land in
+  // the set as NaN, which matches nothing and can never be cleared; one
+  // with no channel would open a phantom "" channel beside the real ones.
+  // Both halves of the guard were unmeasured until 2026-08-22.
+  const rows = [
+    { channel: "commons", seq: 10, sender: "core" },
+    { channel: "commons", sender: "core" }, // synthetic notice, no seq
+    { channel: "", seq: 11, sender: "core" },
+  ];
+
+  it("drops envelopes with no numeric seq, and never invents a channel", () => {
+    const out = unread_seqs_by_channel(rows, "laurent");
+    expect(Object.keys(out)).toEqual(["commons"]);
+    expect([...out.commons]).toEqual([10]);
+  });
+
+  it("still COUNTS a seq-less envelope in the badge — a message is never hidden", () => {
+    // Deliberately different from the seq set: the badge's job is "there is
+    // something here", which survives a missing seq. Only the navigable set
+    // needs a seq to point at. The two readers disagree on purpose.
+    expect(unread_by_channel(rows, "laurent")).toEqual({ commons: 2 });
+  });
+});

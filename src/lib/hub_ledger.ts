@@ -161,7 +161,10 @@ export function canonical_json(value: unknown): string {
 }
 
 async function sha256_hex(text: string): Promise<string> {
-  // Browser path (secure contexts) and vitest/node both expose webcrypto.
+  // Browsers expose webcrypto in secure contexts. Under test they do NOT come
+  // for free: jsdom installs a `crypto` global without SubtleCrypto, and this
+  // line read as "Cannot read properties of undefined (reading 'digest')"
+  // until tests/setup/jsdom_globals.ts put Node's webcrypto back.
   const data = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
